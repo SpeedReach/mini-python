@@ -13,13 +13,8 @@ pub const Def = struct {
     body: Suite,
 };
 
-pub const SuiteTag = enum { simple_statement, statement };
-
-pub const Suite = union(SuiteTag) {
-    /// ⟨simple stmt⟩ NEWLINE
-    simple_statement: SimpleStatement,
-    /// NEWLINE BEGIN⟨stmt⟩+ END
-    statement: []const Statement,
+pub const Suite = struct {
+    statements: []const Statement,
 };
 
 pub const SimpleStatementTag = enum { @"return", assign, assign_list, print, expr };
