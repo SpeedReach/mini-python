@@ -1,20 +1,20 @@
 pub const Ident = []const u8;
 
 pub const AstFile = struct {
-    defs: []const Def,
+    defs: std.ArrayList(Def),
     // atleast 1 statement is required
-    statements: []const Statement,
+    statements: std.ArrayList(Statement),
 };
 
 /// def ⟨ident⟩ ( ⟨ident⟩∗, ) : ⟨suite⟩
 pub const Def = struct {
     name: Ident,
-    params: []const Ident,
+    params: std.ArrayList(Ident),
     body: Suite,
 };
 
 pub const Suite = struct {
-    statements: []const Statement,
+    statements: std.ArrayList(Statement),
 };
 
 pub const SimpleStatementTag = enum { @"return", assign, assign_list, print, expr };
@@ -69,7 +69,7 @@ pub const IfStatement = struct {
 pub const IfElseStatement = struct {
     condition: Expr,
     if_body: Suite,
-    @"else": *const Expr,
+    else_body: Suite,
 };
 
 pub const ForInStatement = struct {
@@ -104,7 +104,7 @@ pub const Expr = union(ExprTag) {
 
 pub const ConstTag = enum { int, string, true, false, none };
 
-pub const Const = union(ConstTag) { int: i64, string: []const u8, true, false, none };
+pub const Const = union(ConstTag) { int: i64, string: []const u8, boolean: bool, none };
 
 pub const ListAccess = struct {
     list: *const Expr,
@@ -119,11 +119,11 @@ pub const BinOpExpr = struct {
 
 pub const FunctionCall = struct {
     name: Ident,
-    args: []const *const Expr,
+    args: std.ArrayList(*const Expr),
 };
 
 pub const ListDeclare = struct {
-    values: []const *const Expr,
+    values: std.ArrayList(*const Expr),
 };
 
 pub const ParenExpr = struct {
@@ -153,45 +153,3 @@ pub const BinOp = enum {
 
 const std = @import("std");
 const testing = std.testing;
-
-test "can compile" {
-    //const gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const file = AstFile{
-        .defs = &[_]Def{
-            Def{
-                .name = "add",
-                .params = &[_]Ident{ "a", "b" },
-                .body = Suite{
-                    .simple_statement = SimpleStatement{
-                        .assign = SimpleAssignment{
-                            .lhs = "result",
-                            .rhs = &Expr{
-                                .bin_op = BinOpExpr{
-                                    .lhs = &Expr{ .ident = "a" },
-                                    .op = BinOp.add,
-                                    .rhs = &Expr{ .ident = "b" },
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-        },
-        .statements = &[_]Statement{
-            Statement{
-                .simple_statement = SimpleStatement{
-                    .expr = &Expr{
-                        .function_call = FunctionCall{
-                            .name = "add",
-                            .args = &[_]*const Expr{
-                                &Expr{ .@"const" = Const{ .int = 3 } },
-                                &Expr{ .@"const" = Const{ .int = 7 } },
-                            },
-                        },
-                    },
-                },
-            },
-        },
-    };
-    try testing.expect(file.defs.len == 1);
-}

@@ -13,6 +13,8 @@ pub const RawToken = struct {
         invalid,
         eof,
         def,
+        // ':'
+        colon,
         identifier,
         add,
         sub,
@@ -63,30 +65,11 @@ pub const RawToken = struct {
         in,
         not,
         print,
-        None
     };
 
-    pub const keywords = std.StaticStringMap(Tag).initComptime(.{
-        .{"def", Tag.def},
-        .{"True", Tag.true},
-        .{"False", Tag.false},
-        .{"none", Tag.none},
-        .{"return", Tag.@"return"},
-        .{"and", Tag.@"and"},
-        .{"or", Tag.@"or"},
-        .{"else", Tag.@"else"},
-        .{"for", Tag.@"for"},
-        .{"if", Tag.@"if"},
-        .{"in", Tag.in},
-        .{"not", Tag.not},
-        .{"print", Tag.print},
-        .{"None", Tag.none}
-    });
+    pub const keywords = std.StaticStringMap(Tag).initComptime(.{ .{ "def", Tag.def }, .{ "True", Tag.true }, .{ "False", Tag.false }, .{ "none", Tag.none }, .{ "return", Tag.@"return" }, .{ "and", Tag.@"and" }, .{ "or", Tag.@"or" }, .{ "else", Tag.@"else" }, .{ "for", Tag.@"for" }, .{ "if", Tag.@"if" }, .{ "in", Tag.in }, .{ "not", Tag.not }, .{ "print", Tag.print }, .{ "None", Tag.none } });
 
     pub fn getKeyword(bytes: []const u8) ?Tag {
         return keywords.get(bytes);
     }
-
-    
 };
-

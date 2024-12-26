@@ -88,6 +88,11 @@ pub const Tokenizer = struct {
                             result.tag = .sub;
                             break;
                         },
+                        ':' => {
+                            self.index += 1;
+                            result.tag = .colon;
+                            break;
+                        },
                         '*' => {
                             self.index += 1;
                             result.tag = .mul;
@@ -328,7 +333,7 @@ const test_allocator = std.testing.allocator;
 
 test "can lex" {
     const buffer =
-        \\def add(a, b)  
+        \\def add(a, b)
         \\  a[b] = c
         \\  if(c == 123) {
         \\    return 0

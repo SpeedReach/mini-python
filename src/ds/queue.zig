@@ -19,7 +19,7 @@ pub fn Queue(comptime T: type) type {
         }
 
         /// Add an item to the back of the queue
-        pub fn enqueue(self: *Self, item: T) !void {
+        pub fn enqueue(self: *Self, item: T) std.mem.Allocator.Error!void {
             try self.items.append(item);
         }
 

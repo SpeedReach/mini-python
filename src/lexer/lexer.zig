@@ -50,7 +50,20 @@ pub const Lexer = struct {
         InvalidToken,
     };
 
-    pub fn next(self: *Lexer) anyerror!Token {
+    pub fn peek(self: *Lexer) !Token {
+        if (self.queue.len() > 0) {
+            return self.queue.peek().?;
+        }
+        const tok = try self.next();
+        try self.queue.enqueue(tok);
+        return tok;
+    }
+
+    pub fn pos(self: *Lexer) u32 {
+        return self.tokenizer.index;
+    }
+
+    pub fn next(self: *Lexer) !Token {
         if (self.queue.len() > 0) {
             const node = self.queue.dequeue();
             return node.?;
