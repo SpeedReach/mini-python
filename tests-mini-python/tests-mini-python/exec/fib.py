@@ -12,5 +12,7 @@ def fib(n):
 # une ou plusieurs instructions à la fin du fichier
 print("quelques valeurs de la suite de Fibonacci :")
 for n in [0, 1, 11, 42]:
-    print(fib(n))
-
+    print(hi)
+    for w in n:
+        print(fib(w))
+    print(b)

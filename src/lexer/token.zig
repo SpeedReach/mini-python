@@ -65,6 +65,7 @@ pub const RawToken = struct {
         in,
         not,
         print,
+        comment,
     };
 
     pub const keywords = std.StaticStringMap(Tag).initComptime(.{ .{ "def", Tag.def }, .{ "True", Tag.true }, .{ "False", Tag.false }, .{ "none", Tag.none }, .{ "return", Tag.@"return" }, .{ "and", Tag.@"and" }, .{ "or", Tag.@"or" }, .{ "else", Tag.@"else" }, .{ "for", Tag.@"for" }, .{ "if", Tag.@"if" }, .{ "in", Tag.in }, .{ "not", Tag.not }, .{ "print", Tag.print }, .{ "None", Tag.none } });

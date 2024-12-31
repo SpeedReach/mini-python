@@ -1,25 +1,46 @@
 pub const std = @import("std");
 pub const ds = @import("./ds/ds.zig");
+const lex = @import("lexer/lexer.zig");
+const ast = @import("ast/ast.zig");
+const cfgir = @import("cfgir/cfgir.zig");
+const parse = @import("parser/parser.zig");
+const dom = @import("ssa/dominance_tree.zig");
 
-pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+pub fn compile(code: [:0]const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var parser = parse.Parser.init(allocator, code);
+    const ast_file = try parser.parse();
 
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
-
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
-
-    try bw.flush(); // don't forget to flush!
+    const main_cfg = try cfgir.astStatementsToCFG(allocator, ast_file.statements.items, "top%level%statements");
+    try cfgir.generateMermaidDiagram(main_cfg, std.io.getStdErr().writer().any());
+    for (ast_file.defs.items) |def| {
+        const cfg = try cfgir.astStatementsToCFG(allocator, def.body.statements.items, def.name);
+        try cfgir.generateMermaidDiagram(cfg, std.io.getStdErr().writer().any());
+    }
+    //const dom_tree = try dom.computeDominaceTree(allocator, &main_cfg);
+    //dom.print_dom_tree(dom_tree);
 }
 
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
+pub fn main() !void {
+    // const code =
+    //     \\print(1+2)
+    //     \\
+    // ;
+    // try compile(code);
+    var args = std.process.args(); //why does this only compile with "var"??
+    _ = args.skip(); //to skip the zig call
+
+    const path = args.next().?;
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+    const file_size = (try file.stat()).size;
+    const allocator = std.heap.page_allocator;
+    const buffer = try allocator.alloc(u8, file_size);
+    _ = try file.readAll(buffer);
+
+    const imm_buffer: [:0]const u8 = @ptrCast(buffer);
+
+    try compile(imm_buffer);
 }

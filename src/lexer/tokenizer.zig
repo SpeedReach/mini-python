@@ -1,7 +1,27 @@
 const token = @import("./token.zig");
 const std = @import("std");
 
-const State = enum { start, eof, identifier, invalid, number, @"or", @"and", not, greater, lesser, equal, bang, comment, div, angle_bracket_left, angle_bracket_right, space, string_literal, string_literal_backslash };
+const State = enum {
+    start,
+    eof,
+    identifier,
+    invalid,
+    number,
+    @"or",
+    @"and",
+    not,
+    greater,
+    lesser,
+    equal,
+    bang,
+    div,
+    angle_bracket_left,
+    angle_bracket_right,
+    space,
+    string_literal,
+    string_literal_backslash,
+    comment,
+};
 
 pub const Tokenizer = struct {
     buffer: [:0]const u8,
@@ -131,8 +151,33 @@ pub const Tokenizer = struct {
                             state = .string_literal;
                             continue;
                         },
+                        '#' => {
+                            state = .comment;
+                            result.tag = .comment;
+                            continue;
+                        },
                         else => {
                             state = .invalid;
+                            continue;
+                        },
+                    }
+                },
+                .comment => {
+                    self.index += 1;
+                    if (self.index >= self.buffer.len) {
+                        state = .invalid;
+                        break;
+                    }
+                    switch (self.buffer[self.index]) {
+                        0 => {
+                            state = .invalid;
+                            continue;
+                        },
+                        '\n', '\r' => {
+                            result.tag = .new_line;
+                            break;
+                        },
+                        else => {
                             continue;
                         },
                     }
@@ -157,7 +202,7 @@ pub const Tokenizer = struct {
                             state = .string_literal_backslash;
                             continue;
                         },
-                        '\n' | '\r' => {
+                        '\n', '\r' => {
                             state = .invalid;
                             continue;
                         },
@@ -185,7 +230,7 @@ pub const Tokenizer = struct {
                         ' ' => {
                             continue;
                         },
-                        '\n' | '\r' => {
+                        '\n', '\r' => {
                             result.tag = .new_line;
                             break;
                         },
@@ -252,7 +297,8 @@ pub const Tokenizer = struct {
                     self.index += 1;
                     switch (self.buffer[self.index]) {
                         '/' => {
-                            state = .div;
+                            self.index += 1;
+                            result.tag = .div;
                             break;
                         },
                         else => {
@@ -305,7 +351,7 @@ pub const Tokenizer = struct {
                                 continue;
                             }
                         },
-                        '\n' => {
+                        '\n', '\r' => {
                             self.index += 1;
                             result.tag = .invalid;
                             break;
@@ -330,6 +376,32 @@ pub const Tokenizer = struct {
 const testing = std.testing;
 const ArrayList = std.ArrayList;
 const test_allocator = std.testing.allocator;
+
+test "tokenize (abb+bdd)//c" {
+    const buffer = "(abb+bdd)//c";
+    var tokenizer = Tokenizer.init(buffer);
+
+    const l_paren = tokenizer.next();
+    const a = tokenizer.next();
+    const add = tokenizer.next();
+    const b = tokenizer.next();
+    const r_paren = tokenizer.next();
+    const mul = tokenizer.next();
+    const c = tokenizer.next();
+    const eof = tokenizer.next();
+
+    try testing.expectEqual(token.RawToken.Tag.l_paren, l_paren.tag);
+    try testing.expectEqual(token.RawToken.Tag.identifier, a.tag);
+    try testing.expectEqualStrings("abb", buffer[a.loc.start..a.loc.end]);
+    try testing.expectEqual(token.RawToken.Tag.add, add.tag);
+    try testing.expectEqual(token.RawToken.Tag.identifier, b.tag);
+    try testing.expectEqualStrings("bdd", buffer[b.loc.start..b.loc.end]);
+    try testing.expectEqual(token.RawToken.Tag.r_paren, r_paren.tag);
+    try testing.expectEqual(token.RawToken.Tag.div, mul.tag);
+    try testing.expectEqual(token.RawToken.Tag.identifier, c.tag);
+    try testing.expectEqualStrings("c", buffer[c.loc.start..c.loc.end]);
+    try testing.expectEqual(token.RawToken.Tag.eof, eof.tag);
+}
 
 test "can lex" {
     const buffer =

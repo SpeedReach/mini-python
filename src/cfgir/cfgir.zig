@@ -3,66 +3,81 @@ pub const ast = @import("../ast/ast.zig");
 
 pub const Ident = []const u8;
 
-pub const Def = struct {
-    name: Ident,
-    params: []const Ident,
-    body: ControlFlowGraph,
-};
+const Error = error{ UnexpectError, AlreadyBuilt };
+const CFGError = Error || std.mem.Allocator.Error;
 
 pub const Program = struct {
-    defs: std.ArrayList(Def),
+    functions: std.StringHashMap(ControlFlowGraph),
     main: ControlFlowGraph,
-    allocator: std.heap.ArenaAllocator,
-
-    pub fn fromAst(tree: *const ast.AstFile) Program {
-        const allocator = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        const self = Program{
-            .defs = std.ArrayList(Def).init(allocator),
-            .main = undefined,
-            .allocator = allocator,
-        };
-        for (tree.defs) |def| {
-            self.defs.append(self.astDefToCFG(def));
-        }
-
-        return self;
-    }
 
     pub fn deinit(self: *Program) void {
-        self.allocator.deinit();
+        self.main.deinit();
+        for (self.functions.valueIterator().items) |cfg| {
+            cfg.deinit();
+        }
+        self.functions.deinit();
     }
 };
-
-const UnexpectError = error{UnexpectError};
-const CFGError = UnexpectError || std.mem.Allocator.Error;
 
 pub const CFGConstructor = struct {
     allocator: std.mem.Allocator,
     prefix: []const u8,
     block_idx: u32,
     blocks: std.AutoHashMap(u32, *Block),
+    /// Stack to keep track of nested control flow statements
     scope_control_stack: std.ArrayList(*Block),
     /// CurrentBlock should always be a NormalBlock (Sequential)
     current_block: *Block,
+    end_block: *Block,
+    built: bool,
 
     fn init(allocator: std.mem.Allocator, prefix: []const u8) !CFGConstructor {
         const block = try allocator.create(Block);
         var blocks = std.AutoHashMap(u32, *Block).init(allocator);
         block.* = Block{ .Sequential = NormalBlock.init(allocator, 0, try std.fmt.allocPrint(allocator, "{s}%{d}", .{ prefix, 0 })) };
-
+        const end = try allocator.create(Block);
+        end.* = Block{ .Sequential = NormalBlock.init(allocator, std.math.maxInt(u32), try std.fmt.allocPrint(allocator, "{s}%end", .{prefix})) };
         try blocks.put(0, block);
+        try blocks.put(std.math.maxInt(u32), end);
         return CFGConstructor{
             .allocator = allocator,
             .block_idx = 1,
             .prefix = prefix,
             .current_block = block,
+            .end_block = end,
             .blocks = blocks,
             .scope_control_stack = std.ArrayList(*Block).init(allocator),
+            .built = false,
         };
     }
 
+    pub fn deinit(self: *CFGConstructor) void {
+        self.scope_control_stack.deinit();
+        if (self.built) {
+            // Since memory owner ship is transferred to the Program struct, we don't need to deinit the blocks
+            return;
+        }
+        for (self.blocks.valueIterator().items) |block| {
+            block.deinit();
+        }
+        self.blocks.deinit();
+    }
+
+    /// Build the ControlFlowGraph from the constructed blocks
+    /// Should be called after adding all statements
+    /// And should only be called once
     pub fn build(self: *CFGConstructor) !ControlFlowGraph {
-        const cfg = ControlFlowGraph{ .blocks = self.blocks, .entry = self.blocks.get(0).?, .exit = self.current_block };
+        if (self.built) {
+            return Error.AlreadyBuilt;
+        }
+        //Link last block to end block
+        self.current_block.Sequential.successor = self.end_block;
+        try self.end_block.Sequential.predecessors.append(self.current_block);
+        const cfg = ControlFlowGraph{
+            .blocks = self.blocks,
+            .entry = self.blocks.get(0).?,
+            .exit = self.end_block,
+        };
         return cfg;
     }
 
@@ -71,6 +86,12 @@ pub const CFGConstructor = struct {
             switch (statement) {
                 .simple_statement => |s_s| {
                     try self.current_block.Sequential.statements.append(s_s);
+                    if (s_s == .@"return") {
+                        // Link to end block
+                        self.current_block.Sequential.successor = self.end_block;
+                        try self.end_block.Sequential.predecessors.append(self.current_block);
+                        return;
+                    }
                 },
                 .for_in_statement => |for_in| {
                     try self.handleForIn(for_in);
@@ -86,7 +107,7 @@ pub const CFGConstructor = struct {
     }
 
     fn handleIfElse(self: *CFGConstructor, statement: ast.IfElseStatement) !void {
-        const if_cond_block = try self.createDecisionBlock("ifCondBlock", statement.condition);
+        const if_cond_block = try self.createDecisionBlock("ifCondBlock", statement.condition.*);
         // link currentBlock => ifCondBlock
         self.current_block.Sequential.successor = if_cond_block;
         try if_cond_block.Decision.predecessors.append(self.current_block);
@@ -176,7 +197,6 @@ pub const CFGConstructor = struct {
     }
 
     fn handleForIn(self: *CFGConstructor, statement: ast.ForInStatement) !void {
-
         // add i=0; n=len(iterable) to currentBlock
         // indexIdent = 0
         const index_ident = try formatForIndex(self.allocator, self.prefix, self.block_idx);
@@ -189,14 +209,18 @@ pub const CFGConstructor = struct {
         // n = len(iterable)
         const nIdent = try formatForN(self.allocator, self.prefix, self.block_idx);
         const len_expr = try self.allocator.create(ast.Expr);
-        var len_args = try std.ArrayList(*const Expr).initCapacity(self.allocator, 1);
+        var len_args = try std.ArrayList(*Expr).initCapacity(self.allocator, 1);
         try len_args.insert(0, statement.iterable);
         len_expr.* = ast.Expr{ .function_call = ast.FunctionCall{ .args = len_args, .name = "len" } };
         try self.current_block.Sequential.statements.append(ast.SimpleStatement{ .assign = ast.SimpleAssignment{ .lhs = nIdent, .rhs = len_expr } });
 
         // forConditionBlock, the block that contains the condition of the for loop
         // if i < n goto forBody else goto forExit
-        const condition = ast.Expr{ .bin_op = ast.BinOpExpr{ .op = ast.BinOp.lt, .lhs = &ast.Expr{ .ident = index_ident }, .rhs = &ast.Expr{ .ident = nIdent } } };
+        const condition_ident_expr = try self.allocator.create(ast.Expr);
+        condition_ident_expr.* = ast.Expr{ .ident = index_ident };
+        const condition_rhs_expr = try self.allocator.create(ast.Expr);
+        condition_rhs_expr.* = ast.Expr{ .ident = nIdent };
+        const condition = ast.Expr{ .bin_op = ast.BinOpExpr{ .op = ast.BinOp.lt, .lhs = condition_ident_expr, .rhs = condition_ident_expr } };
         var for_condition_block = try self.allocator.create(Block);
         for_condition_block.* = Block{
             .Decision = try DecisionBlock.init(
@@ -267,6 +291,7 @@ pub const CFGConstructor = struct {
         switch (exit_block.?.*) {
             .Sequential => {
                 try exit_block.?.Sequential.predecessors.append(for_body);
+                self.current_block = exit_block.?;
             },
             .Decision => {
                 try exit_block.?.Decision.predecessors.append(for_body);
@@ -277,16 +302,23 @@ pub const CFGConstructor = struct {
     }
 };
 
-pub fn astDefToCFG(allocator: std.mem.Allocator, def: ast.Def) Def {
-    const cfg = astStatementsToCFG(allocator, def.body.statements);
-    return Def{
-        .name = def.name,
-        .params = def.params,
-        .body = cfg,
+pub fn astToCfgIR(allocator: std.mem.Allocator, ast_file: ast.AstFile) !*Program {
+    var functions = std.StringHashMap(ControlFlowGraph).init(allocator);
+    const main = try astStatementsToCFG(allocator, ast_file.statements.items, "main");
+    for (ast_file.defs.items) |def| {
+        var constructor = try CFGConstructor.init(allocator, def.name);
+        try constructor.addStatements(def.body.statements.items);
+        try functions.put(def.name, try constructor.build());
+    }
+    const program = try allocator.create(Program);
+    program.* = Program{
+        .functions = functions,
+        .main = main,
     };
+    return program;
 }
 
-fn astStatementsToCFG(allocator: std.mem.Allocator, statements: []ast.Statement, prefix: []const u8) !ControlFlowGraph {
+pub fn astStatementsToCFG(allocator: std.mem.Allocator, statements: []ast.Statement, prefix: []const u8) !ControlFlowGraph {
     var constructor = try CFGConstructor.init(allocator, prefix);
     try constructor.addStatements(statements);
     return constructor.build();
@@ -314,6 +346,13 @@ pub const ControlFlowGraph = struct {
     blocks: std.AutoHashMap(u32, *Block),
     entry: *Block,
     exit: *Block,
+
+    pub fn deinit(self: *ControlFlowGraph) void {
+        for (self.blocks.valueIterator().items) |block| {
+            block.deinit();
+        }
+        self.blocks.deinit();
+    }
 };
 
 pub const BlockTag = enum { Sequential, Decision };
@@ -330,6 +369,11 @@ pub const NormalBlock = struct {
     pub fn init(allocator: std.mem.Allocator, id: u32, name: []const u8) NormalBlock {
         return NormalBlock{ .name = name, .id = id, .statements = std.ArrayList(Statement).init(allocator), .successor = null, .predecessors = std.ArrayList(*Block).init(allocator) };
     }
+
+    pub fn deinit(self: *NormalBlock) void {
+        self.statements.deinit();
+        self.predecessors.deinit();
+    }
 };
 
 pub const DecisionBlock = struct {
@@ -340,12 +384,14 @@ pub const DecisionBlock = struct {
     then_block: ?*Block,
     else_block: ?*Block,
 
+    pub fn deinit(self: *DecisionBlock) void {
+        self.predecessors.deinit();
+    }
+
     pub fn init(allocator: std.mem.Allocator, id: u32, name: []const u8, condition: Expr) !DecisionBlock {
         return DecisionBlock{ .name = name, .id = id, .condition = condition, .predecessors = std.ArrayList(*Block).init(allocator), .then_block = null, .else_block = null };
     }
 };
-
-pub const StatementTag = enum { @"return", assign, assign_list, print, expr };
 
 pub const Statement = ast.SimpleStatement;
 
@@ -357,6 +403,7 @@ test "for " {
     // for a in b:
     //    for x in y:
     //       if awrawr:
+    var dummyExpr = ast.Expr{ .ident = "dummy" };
     var arenaAllocator = std.heap.ArenaAllocator.init(testing.allocator);
     defer arenaAllocator.deinit();
     const allocator = arenaAllocator.allocator();
@@ -364,19 +411,22 @@ test "for " {
     var outerForBody = std.ArrayList(ast.Statement).init(allocator);
     var innerForBody = std.ArrayList(ast.Statement).init(allocator);
     var innerBodyStatements = std.ArrayList(ast.Statement).init(allocator);
-    try innerBodyStatements.append(ast.Statement{ .simple_statement = ast.SimpleStatement{ .expr = &ast.Expr{ .ident = "awrawr" } } });
+    var innerBodyExpr = ast.Expr{ .ident = "awrawr" };
+    try innerBodyStatements.append(ast.Statement{ .simple_statement = ast.SimpleStatement{ .expr = &innerBodyExpr } });
+    var innerForBodyConditionExpr = ast.Expr{ .ident = "y" };
     try innerForBody.append(ast.Statement{ .if_statement = ast.IfStatement{
-        .condition = &ast.Expr{ .ident = "awrawr" },
+        .condition = &innerForBodyConditionExpr,
         .body = ast.Suite{ .statements = innerBodyStatements },
     } });
+    var outerForBodyIter = ast.Expr{ .ident = "b" };
     try outerForBody.append(ast.Statement{ .for_in_statement = ast.ForInStatement{
         .var_name = "x",
-        .iterable = &ast.Expr{ .ident = "y" },
+        .iterable = &outerForBodyIter,
         .body = ast.Suite{
             .statements = innerForBody,
         },
     } });
-    const outerFor = ast.ForInStatement{ .var_name = "a", .iterable = &ast.Expr{ .ident = "b" }, .body = ast.Suite{ .statements = outerForBody } };
+    const outerFor = ast.ForInStatement{ .var_name = "a", .iterable = &dummyExpr, .body = ast.Suite{ .statements = outerForBody } };
 
     try statements.append(ast.Statement{ .for_in_statement = outerFor });
 

@@ -21,7 +21,7 @@ pub const SimpleStatementTag = enum { @"return", assign, assign_list, print, exp
 
 pub const SimpleStatement = union(SimpleStatementTag) {
     /// return ⟨expr⟩
-    @"return": *const Expr,
+    @"return": *Expr,
     /// ⟨ident⟩ = ⟨expr⟩
     assign: SimpleAssignment,
     /// ⟨expr ⟩ [ ⟨expr ⟩ ] =⟨expr ⟩
@@ -29,22 +29,22 @@ pub const SimpleStatement = union(SimpleStatementTag) {
     /// print ( ⟨expr ⟩ )
     print: Print,
     /// ⟨expr ⟩
-    expr: *const Expr,
+    expr: *Expr,
 };
 
 pub const SimpleAssignment = struct {
     lhs: Ident,
-    rhs: *const Expr,
+    rhs: *Expr,
 };
 
 pub const ListAssignent = struct {
-    lhs: *const Expr,
-    idx: *const Expr,
-    rhs: *const Expr,
+    lhs: *Expr,
+    idx: *Expr,
+    rhs: *Expr,
 };
 
 pub const Print = struct {
-    value: *const Expr,
+    value: *Expr,
 };
 
 pub const StatementTag = enum {
@@ -62,19 +62,19 @@ pub const Statement = union(StatementTag) {
 };
 
 pub const IfStatement = struct {
-    condition: *const Expr,
+    condition: *Expr,
     body: Suite,
 };
 
 pub const IfElseStatement = struct {
-    condition: Expr,
+    condition: *Expr,
     if_body: Suite,
     else_body: Suite,
 };
 
 pub const ForInStatement = struct {
     var_name: Ident,
-    iterable: *const Expr,
+    iterable: *Expr,
     body: Suite,
 };
 
@@ -87,47 +87,41 @@ pub const ExprTag = enum {
     bin_op,
     function_call,
     list_declare,
-    paren_expr,
 };
 
 pub const Expr = union(ExprTag) {
     @"const": Const,
     ident: Ident,
     list_access: ListAccess,
-    unary_expr: *const Expr,
-    not_expr: *const Expr,
+    unary_expr: *Expr,
+    not_expr: *Expr,
     bin_op: BinOpExpr,
     function_call: FunctionCall,
     list_declare: ListDeclare,
-    paren_expr: ParenExpr,
 };
 
-pub const ConstTag = enum { int, string, true, false, none };
+pub const ConstTag = enum { int, string, boolean, none };
 
 pub const Const = union(ConstTag) { int: i64, string: []const u8, boolean: bool, none };
 
 pub const ListAccess = struct {
-    list: *const Expr,
-    idx: *const Expr,
+    list: *Expr,
+    idx: *Expr,
 };
 
 pub const BinOpExpr = struct {
-    lhs: *const Expr,
+    lhs: *Expr,
     op: BinOp,
-    rhs: *const Expr,
+    rhs: *Expr,
 };
 
 pub const FunctionCall = struct {
     name: Ident,
-    args: std.ArrayList(*const Expr),
+    args: std.ArrayList(*Expr),
 };
 
 pub const ListDeclare = struct {
-    values: std.ArrayList(*const Expr),
-};
-
-pub const ParenExpr = struct {
-    expr: *const Expr,
+    values: std.ArrayList(*Expr),
 };
 
 pub const BinOp = enum {

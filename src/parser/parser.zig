@@ -9,6 +9,7 @@ pub const Error = error{ParsingFailed} || std.mem.Allocator.Error;
 pub const Message = @import("./diagnostics.zig").Message;
 pub const DiagnosticErr = @import("./diagnostics.zig").Error;
 
+const ExprParser = @import("./expr_parser.zig").ExprParser;
 const RawToken = @import("../lexer/token.zig").RawToken;
 
 pub const Parser = struct {
@@ -24,12 +25,7 @@ pub const Parser = struct {
     }
 
     fn parseDef(self: *Parser) anyerror!ast.Def {
-        const def = try self.lexer.next();
-        if (def != .raw or def.raw.tag != RawToken.Tag.def) {
-            self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect def, got {} at position {}", .{ def, self.lexer.pos() });
-            return Error.ParsingFailed;
-        }
-
+        try self.expectRaw(RawToken.Tag.def);
         const identifier = try self.lexer.next();
         if (identifier != .raw or identifier.raw.tag != RawToken.Tag.identifier) {
             self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect identifier, got {} at position {}", .{
@@ -44,16 +40,7 @@ pub const Parser = struct {
             self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect :, got {} at position {}", .{ colon, self.lexer.pos() });
             return Error.ParsingFailed;
         }
-        const new_line = try self.lexer.next();
-        if (new_line != lex.TokenTag.new_line) {
-            self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect new line, got {} at position {}", .{ new_line, self.lexer.pos() });
-            return Error.ParsingFailed;
-        }
-        const begin = try self.lexer.next();
-        if (begin != lex.TokenTag.begin) {
-            self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect begin, got {} at position {}", .{ begin, self.lexer.pos() });
-            return Error.ParsingFailed;
-        }
+        try self.expect(lex.TokenTag.new_line);
         const suite = try self.parseSuite();
         return ast.Def{ .name = self.code[identifier.raw.loc.start..identifier.raw.loc.end], .body = suite, .params = argumentNames };
     }
@@ -103,8 +90,38 @@ pub const Parser = struct {
             }
         }
     }
-
+    fn parseStatement(self: *Parser) anyerror!ast.Statement {
+        const token = try self.lexer.peek();
+        switch (token) {
+            .raw => |raw| {
+                switch (raw.tag) {
+                    .@"if" => {
+                        return try self.parseIf();
+                    },
+                    .@"for" => {
+                        const for_in = try self.parseForIn();
+                        return ast.Statement{ .for_in_statement = for_in };
+                    },
+                    .eof => {
+                        return Error.ParsingFailed;
+                    },
+                    .comment => {
+                        _ = try self.lexer.next();
+                        return try self.parseStatement();
+                    },
+                    else => {
+                        const simple_statement = try self.parseSimpleStatement();
+                        return ast.Statement{ .simple_statement = simple_statement };
+                    },
+                }
+            },
+            else => {
+                return Error.ParsingFailed;
+            },
+        }
+    }
     fn parseSuite(self: *Parser) anyerror!ast.Suite {
+        try self.expect(lex.TokenTag.begin);
         var statements = std.ArrayList(ast.Statement).init(self.allocator);
         while (true) {
             const token = try self.lexer.peek();
@@ -113,36 +130,117 @@ pub const Parser = struct {
                     _ = try self.lexer.next();
                     continue;
                 },
-                .begin | .end => {
-                    self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect statement, got {} at position {}", .{ token, self.lexer.pos() });
+                .begin => {
                     return Error.ParsingFailed;
                 },
+                .end => {
+                    _ = try self.lexer.next();
+
+                    return ast.Suite{
+                        .statements = statements,
+                    };
+                },
                 .raw => |raw| {
-                    switch (raw.tag) {
-                        .@"if" => {
-                            const if_statement = try self.parseIf();
-                            try statements.append(ast.Statement{ .if_statement = if_statement });
-                        },
-                        .@"return" => {
-                            const return_statement = try self.parseReturn();
-                            try statements.append(ast.Statement{ .simple_statement = return_statement });
-                        },
-                        else => {
-                            self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect statement, got {} at position {}", .{ token, self.lexer.pos() });
-                            return Error.ParsingFailed;
-                        },
+                    if (raw.tag == .eof) {
+                        return ast.Suite{
+                            .statements = statements,
+                        };
                     }
+                    try statements.append(try self.parseStatement());
                 },
             }
         }
         return Error.ParsingFailed;
     }
 
+    fn parseForIn(self: *Parser) !ast.ForInStatement {
+        try self.expectRaw(RawToken.Tag.@"for");
+        const ident = try self.lexer.next();
+        if (ident != .raw and ident.raw.tag != RawToken.Tag.identifier) {
+            self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect identifier, got {} at position {}", .{ ident, self.lexer.pos() });
+            return Error.ParsingFailed;
+        }
+        try self.expectRaw(RawToken.Tag.in);
+        const expr = try self.parseExpr();
+        try self.expectRaw(RawToken.Tag.colon);
+        try self.expect(lex.TokenTag.new_line);
+        const suite = try self.parseSuite();
+        return ast.ForInStatement{
+            .var_name = self.code[ident.raw.loc.start..ident.raw.loc.end],
+            .iterable = expr,
+            .body = suite,
+        };
+    }
+
+    fn expectRaw(self: *Parser, tag: RawToken.Tag) !void {
+        const token = try self.lexer.next();
+        if (token != .raw or token.raw.tag != tag) {
+            self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect {}, got {} at position {}", .{ tag, token, self.lexer.pos() });
+            return Error.ParsingFailed;
+        }
+    }
+    fn expect(self: *Parser, tag: lex.TokenTag) !void {
+        const token = try self.lexer.next();
+        if (token != tag) {
+            self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect {}, got {} at position {}", .{ tag, token, self.lexer.pos() });
+            return Error.ParsingFailed;
+        }
+    }
+
+    fn parseSimpleStatement(self: *Parser) !ast.SimpleStatement {
+        const token = try self.lexer.peek();
+        if (token != .raw) {
+            return Error.ParsingFailed;
+        }
+        switch (token.raw.tag) {
+            RawToken.Tag.@"return" => {
+                return try self.parseReturn();
+            },
+            RawToken.Tag.print => {
+                return try self.parsePrint();
+            },
+            else => {
+                const left = try self.parseExpr();
+                switch (left.*) {
+                    ast.ExprTag.ident => {
+                        try self.expectRaw(RawToken.Tag.equal);
+
+                        const right = try self.parseExpr();
+                        return ast.SimpleStatement{ .assign = ast.SimpleAssignment{ .lhs = left.ident, .rhs = right } };
+                    },
+                    ast.ExprTag.list_access => |list_access| {
+                        try self.expectRaw(RawToken.Tag.equal);
+                        const right = try self.parseExpr();
+                        return ast.SimpleStatement{ .assign_list = ast.ListAssignent{
+                            .lhs = list_access.list,
+                            .idx = list_access.idx,
+                            .rhs = right,
+                        } };
+                    },
+                    else => {
+                        try self.expect(lex.TokenTag.new_line);
+                        return ast.SimpleStatement{
+                            .expr = left,
+                        };
+                    },
+                }
+            },
+        }
+    }
+
+    fn parsePrint(self: *Parser) !ast.SimpleStatement {
+        try self.expectRaw(RawToken.Tag.print);
+        const value = try self.parseExpr();
+        return ast.SimpleStatement{ .print = ast.Print{ .value = value } };
+    }
+
     fn parseReturn(self: *Parser) !ast.SimpleStatement {
-        const return_token = try self.lexer.next();
-        if (return_token != .raw or return_token.raw.tag != RawToken.Tag.@"return") {
-            self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect return, got {} at position {}", .{ return_token, self.lexer.pos() });
-            return null;
+        try self.expectRaw(RawToken.Tag.@"return");
+        const next = try self.lexer.peek();
+        if (next == .new_line) {
+            const expr = try self.allocator.create(ast.Expr);
+            expr.* = ast.Expr{ .@"const" = ast.Const.none };
+            return ast.SimpleStatement{ .@"return" = expr };
         }
         const expr = try self.parseExpr();
         return ast.SimpleStatement{ .@"return" = expr };
@@ -179,73 +277,11 @@ pub const Parser = struct {
         l_paren,
     };
 
-    fn parseExprStack(self: *Parser, first: ParseElement) !*ast.Expr {
-        var binOpStack = std.ArrayList(ast.BinOp).init(self.allocator);
-        var elementStack = std.ArrayList(ParseElement).init(self.allocator);
-        defer binOpStack.deinit();
-        defer elementStack.deinit();
-        elementStack.append(first);
-        while (true) {
-            const token = try self.lexer.peek();
-        }
-    }
-
     fn parseExpr(self: *Parser) !*ast.Expr {
-        const first_tok = try self.lexer.next();
-        if (first_tok != .raw) {
-            self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect raw, got {} at position {}", .{ first_tok, self.lexer.pos() });
-            return null;
-        }
+        var parser = ExprParser.init(self.allocator, &self.lexer);
         const expr = try self.allocator.create(ast.Expr);
-        switch (first_tok.raw.tag) {
-            RawToken.Tag.identifier => {
-                const maybe_paren = try self.lexer.peek();
-                if (maybe_paren == .raw and maybe_paren.raw.tag == RawToken.Tag.l_paren) {
-                    const args = self.parseFunctionArgs();
-                    expr.function_call = ast.FunctionCall{
-                        .args = args,
-                        .name = self.code[first_tok.raw.loc.start..first_tok.raw.loc.end],
-                    };
-                    return expr;
-                }
-
-                expr.ident = self.code[first_tok.raw.loc.start..first_tok.raw.loc.end];
-                return expr;
-            },
-            .int | .string | .true | .false | .none => {
-                expr.@"const" = try self.parseConst(first_tok.raw);
-                return expr;
-            },
-            RawToken.Tag.sub => {
-                return ast.Expr{ .unary_expr = try parseExpr(self) };
-            },
-            RawToken.Tag.not => {
-                return ast.Expr{ .not_expr = try parseExpr(self) };
-            },
-            RawToken.Tag.l_bracket => {
-                var elements = std.ArrayList(*ast.Expr).init(self.allocator);
-                while (true) {
-                    try elements.append(try self.parseExpr());
-                    const maybe_comma = try self.lexer.peek();
-                    if (maybe_comma == .raw and maybe_comma.raw.tag == RawToken.Tag.comma) {
-                        _ = try self.lexer.next();
-                        continue;
-                    }
-                    if (maybe_comma == .raw and maybe_comma.raw.tag == RawToken.Tag.r_bracket) {
-                        return ast.Expr{ .list_declare = elements };
-                    }
-                    self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect , or ], got {} at position {}", .{ maybe_comma, self.lexer.pos() });
-                    return Error.ParsingFailed;
-                }
-            },
-            RawToken.Tag.l_paren => {
-                return ast.Expr{ .paren_expr = try parseExpr(self) };
-            },
-            else => {
-                self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect expr, got {} at position {}", .{ first_tok, self.lexer.pos() });
-                return Error.ParsingFailed;
-            },
-        }
+        expr.* = try parser.parse(0);
+        return expr;
     }
 
     fn parseConst(self: *Parser, tok: RawToken) !ast.Const {
@@ -278,23 +314,38 @@ pub const Parser = struct {
     }
 
     fn parseIf(self: *Parser) anyerror!ast.Statement {
-        const if_token = try self.lexer.next();
-        if (if_token != .raw or if_token.raw.tag != RawToken.Tag.@"if") {
-            self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect if, got {} at position {}", .{ if_token, self.lexer.pos() });
-            return Error.ParsingFailed;
+        try self.expectRaw(RawToken.Tag.@"if");
+        const condition = try self.parseExpr();
+        try self.expectRaw(RawToken.Tag.colon);
+        try self.expect(lex.TokenTag.new_line);
+        const suite = try self.parseSuite();
+        const maybe_else = try self.lexer.peek();
+        if (maybe_else != .raw or maybe_else.raw.tag != RawToken.Tag.@"else") {
+            return ast.Statement{ .if_statement = ast.IfStatement{
+                .condition = condition,
+                .body = suite,
+            } };
         }
-        //todo
-        return Error.ParsingFailed;
+        _ = try self.lexer.next();
+        try self.expectRaw(RawToken.Tag.colon);
+        try self.expect(lex.TokenTag.new_line);
+        const else_suite = try self.parseSuite();
+        return ast.Statement{ .if_else_statement = ast.IfElseStatement{
+            .condition = condition,
+            .if_body = suite,
+            .else_body = else_suite,
+        } };
     }
 
     pub fn parse(self: *Parser) anyerror!ast.AstFile {
         var defs = std.ArrayList(ast.Def).init(self.allocator);
-        const statements = std.ArrayList(ast.Statement).init(self.allocator);
+        var statements = std.ArrayList(ast.Statement).init(self.allocator);
 
         while (true) {
             const token = try self.lexer.peek();
             switch (token) {
                 .new_line => {
+                    _ = try self.lexer.next();
                     continue;
                 },
                 .raw => |raw| {
@@ -303,9 +354,12 @@ pub const Parser = struct {
                             const def = try self.parseDef();
                             try defs.append(def);
                         },
+                        .eof => {
+                            break;
+                        },
                         else => {
-                            self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect def, got {} at position {}", .{ token, raw.loc.start });
-                            return Error.ParsingFailed;
+                            const statement = try self.parseStatement();
+                            try statements.append(statement);
                         },
                     }
                 },
@@ -325,7 +379,8 @@ pub const Parser = struct {
 
 const testing = std.testing;
 
-test "ww" {
+test "parse def 1" {
+    const ast_print = @import("../ast/print.zig");
     var arenaAllocator = std.heap.ArenaAllocator.init(testing.allocator);
     defer arenaAllocator.deinit();
     const allocator = arenaAllocator.allocator();
@@ -340,5 +395,55 @@ test "ww" {
         return err;
     };
 
-    std.debug.print("{any}", .{ast_file});
+    try ast_print.print_ast(std.io.getStdErr().writer().any(), ast_file);
+}
+
+test "parse def 2" {
+    const ast_print = @import("../ast/print.zig");
+    var arenaAllocator = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arenaAllocator.deinit();
+    const allocator = arenaAllocator.allocator();
+    const code =
+        \\
+        \\def add(a,b1):
+        \\  c = a + b2 * b3
+        \\  if c < 10:
+        \\    if c < 5:
+        \\      return 2
+        \\    return 1
+        \\  return 0
+        \\def sub(a,b):
+        \\  return a - b
+        \\def test(a,v , dd):
+        \\  return
+        \\print(test(1,2,3))
+        \\print("hello")
+    ;
+    var parser = Parser.init(allocator, code);
+    const ast_file = parser.parse() catch |err| {
+        std.debug.print("{} at {}\n", .{ err, parser.lexer.pos() });
+        std.debug.print("reason: {s}\n", .{parser.diagnostics});
+        return err;
+    };
+
+    try ast_print.print_ast(std.io.getStdErr().writer().any(), ast_file);
+}
+
+test "parse def 3" {
+    const ast_print = @import("../ast/print.zig");
+    var arenaAllocator = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arenaAllocator.deinit();
+    const allocator = arenaAllocator.allocator();
+    const code =
+        \\print("www")
+        \\print("www")
+    ;
+    var parser = Parser.init(allocator, code);
+    const ast_file = parser.parse() catch |err| {
+        std.debug.print("{} at {}\n", .{ err, parser.lexer.pos() });
+        std.debug.print("reason: {s}\n", .{parser.diagnostics});
+        return err;
+    };
+
+    try ast_print.print_ast(std.io.getStdErr().writer().any(), ast_file);
 }
