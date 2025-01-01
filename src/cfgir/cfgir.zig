@@ -71,6 +71,12 @@ pub const CFGConstructor = struct {
             return Error.AlreadyBuilt;
         }
         //Link last block to end block
+        if (self.current_block.Sequential.successor != null and
+            self.current_block.Sequential.successor != self.end_block)
+        {
+            std.debug.print("last block should have no successor when built", .{});
+            return Error.UnexpectError;
+        }
         self.current_block.Sequential.successor = self.end_block;
         try self.end_block.Sequential.predecessors.append(self.current_block);
         const cfg = ControlFlowGraph{
@@ -87,9 +93,7 @@ pub const CFGConstructor = struct {
                 .simple_statement => |s_s| {
                     try self.current_block.Sequential.statements.append(s_s);
                     if (s_s == .@"return") {
-                        // Link to end block
-                        self.current_block.Sequential.successor = self.end_block;
-                        try self.end_block.Sequential.predecessors.append(self.current_block);
+                        //ignore the rest of the statements
                         return;
                     }
                 },
@@ -138,10 +142,10 @@ pub const CFGConstructor = struct {
         self.current_block = exit_block;
 
         // link if and else body to exit block
-        try exit_block.Sequential.predecessors.append(if_last_block);
-        try exit_block.Sequential.predecessors.append(exit_block);
         if_last_block.Sequential.successor = exit_block;
+        try exit_block.Sequential.predecessors.append(if_last_block);
         else_last_block.Sequential.successor = exit_block;
+        try exit_block.Sequential.predecessors.append(else_last_block);
     }
 
     fn createDecisionBlock(self: *CFGConstructor, name: []const u8, condition: ast.Expr) !*Block {
@@ -220,7 +224,7 @@ pub const CFGConstructor = struct {
         condition_ident_expr.* = ast.Expr{ .ident = index_ident };
         const condition_rhs_expr = try self.allocator.create(ast.Expr);
         condition_rhs_expr.* = ast.Expr{ .ident = nIdent };
-        const condition = ast.Expr{ .bin_op = ast.BinOpExpr{ .op = ast.BinOp.lt, .lhs = condition_ident_expr, .rhs = condition_ident_expr } };
+        const condition = ast.Expr{ .bin_op = ast.BinOpExpr{ .op = ast.BinOp.lt, .lhs = condition_ident_expr, .rhs = condition_rhs_expr } };
         var for_condition_block = try self.allocator.create(Block);
         for_condition_block.* = Block{
             .Decision = try DecisionBlock.init(
@@ -246,6 +250,31 @@ pub const CFGConstructor = struct {
         for_condition_block.Decision.then_block = for_body;
         try for_body.Sequential.predecessors.append(for_condition_block);
 
+        // At the start of the forBody, we need to assign the item of the iterable to the loop variable
+        // a = iterable[i]
+        const loop_var_ident = try self.allocator.create(ast.Expr);
+        loop_var_ident.* = ast.Expr{ .ident = statement.var_name };
+        const loop_var_index = try self.allocator.create(ast.Expr);
+        loop_var_index.* = ast.Expr{ .ident = index_ident };
+        const loop_var_expr = try self.allocator.create(ast.Expr);
+        loop_var_expr.* = ast.Expr{
+            .list_access = ast.ListAccess{
+                .list = statement.iterable,
+                .idx = loop_var_index,
+            },
+        };
+        const loop_var_assign = ast.SimpleStatement{ .assign = ast.SimpleAssignment{
+            .lhs = statement.var_name,
+            .rhs = loop_var_expr,
+        } };
+        try for_body.Sequential.statements.append(loop_var_assign);
+
+        // add the body of the for loop to forBody
+        // we do a recursive call here, because the body of the for loop can contain another for loop
+        self.current_block = for_body;
+        try self.addStatements(statement.body.statements.items);
+
+        // At the end of the forBody, we need to increment the index
         // indexIndet = indexIndex + 1
         const increment_expr = try self.allocator.create(ast.Expr);
         const lhs = try self.allocator.create(ast.Expr);
@@ -258,13 +287,6 @@ pub const CFGConstructor = struct {
             .rhs = increment_expr,
         } });
 
-        // add the body of the for loop to forBody
-        // we do a recursive call here, because the body of the for loop can contain another for loop
-        self.current_block = for_body;
-        try self.scope_control_stack.append(for_condition_block);
-        try self.addStatements(statement.body.statements.items);
-        _ = self.scope_control_stack.pop();
-
         // link for_body to forConditionBlock,
         // if the for_body doesn't contain any control flow statement
         // then currentBlock would still be for_body
@@ -274,29 +296,19 @@ pub const CFGConstructor = struct {
 
         // determine the exitBlock,
         // if scopeControlStack is empty, then we create a NormalBlock as exit
-        var exit_block = self.scope_control_stack.getLastOrNull();
-        if (exit_block == null) {
-            exit_block = try self.allocator.create(Block);
-            exit_block.?.* = Block{
-                .Sequential = NormalBlock.init(self.allocator, self.block_idx, try std.fmt.allocPrint(
-                    self.allocator,
-                    "{s}%{d}",
-                    .{ self.prefix, self.block_idx },
-                )),
-            };
-            try self.blocks.put(self.block_idx, exit_block.?);
-            self.block_idx += 1;
-        }
+        var exit_block = try self.allocator.create(Block);
+        exit_block.* = Block{
+            .Sequential = NormalBlock.init(self.allocator, self.block_idx, try std.fmt.allocPrint(
+                self.allocator,
+                "{s}%forexit%{d}",
+                .{ self.prefix, self.block_idx },
+            )),
+        };
+        try self.blocks.put(self.block_idx, exit_block);
+        self.block_idx += 1;
 
-        switch (exit_block.?.*) {
-            .Sequential => {
-                try exit_block.?.Sequential.predecessors.append(for_body);
-                self.current_block = exit_block.?;
-            },
-            .Decision => {
-                try exit_block.?.Decision.predecessors.append(for_body);
-            },
-        }
+        try exit_block.Sequential.predecessors.append(for_condition_block);
+        self.current_block = exit_block;
 
         for_condition_block.Decision.else_block = exit_block;
     }

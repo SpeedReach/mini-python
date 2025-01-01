@@ -2,15 +2,115 @@ const std = @import("std");
 const cfgir = @import("../cfgir/cfgir.zig");
 const HashSet = @import("../ds/ds.zig").HashSet;
 
-pub const DominanceTree = std.AutoHashMap(u32, *HashSet(u32));
+pub const DominanceSet = struct {
+    sets: std.AutoHashMap(u32, HashSet(u32)),
 
-pub fn computeDominaceTree(allocator: std.mem.Allocator, graph: *const cfgir.ControlFlowGraph) !DominanceTree {
+    const Self = @This();
+    pub fn deinit(self: *Self) void {
+        var it = self.sets.valueIterator();
+        while (it.next()) |entry| {
+            entry.*.deinit();
+        }
+        self.sets.deinit();
+    }
+};
+
+pub const DominanceTree = struct {
+    root: *DominanceNode,
+    nodes: std.AutoHashMap(u32, *DominanceNode),
+
+    const Self = @This();
+
+    pub fn deinit(self: Self) void {
+        var it = self.nodes.valueIterator();
+        while (it.next()) |entry| {
+            entry.value.deinit();
+        }
+        self.nodes.deinit();
+    }
+};
+
+pub const DominanceNode = struct {
+    id: u32,
+    children: std.ArrayList(*DominanceNode),
+
+    const Self = @This();
+
+    pub fn deinit(self: Self) void {
+        self.children.deinit();
+    }
+
+    pub fn init(allocator: std.mem.Allocator, id: u32) Self {
+        return Self{
+            .id = id,
+            .children = std.ArrayList(*DominanceNode).init(allocator),
+        };
+    }
+};
+
+pub fn computeDominanceTree(allocator: std.mem.Allocator, graph: *const cfgir.ControlFlowGraph) !DominanceTree {
+    // we have to use var here , so we can deinit the set
+    // the following algorithm does not modify the set.
+    var set = try computeDominanceSet(allocator, graph);
+    defer set.deinit();
+    // First create the nodes
+    var tree_nodes = std.AutoHashMap(u32, *DominanceNode).init(allocator);
+    var it = set.sets.iterator();
+    while (it.next()) |entry| {
+        const key = entry.key_ptr.*;
+        const node = try allocator.create(DominanceNode);
+        node.* = DominanceNode.init(allocator, key);
+        try tree_nodes.put(key, node);
+    }
+
+    // Then create the edges
+    it = set.sets.iterator();
+    while (it.next()) |entry| {
+        const key = entry.key_ptr.*;
+        const value = entry.value_ptr.*;
+        //find the closest dominator
+        var dom_it = value.iterator();
+        while (dom_it.next()) |dom| {
+            const dom_id = dom.*;
+            if (dom_id == key) {
+                continue;
+            }
+            const dom_dom = set.sets.get(dom_id).?;
+            // Check if dom_dom is dominated by all other dominators
+            var dom_it2 = value.iterator();
+            var is_idom = true;
+            while (dom_it2.next()) |dom2| {
+                const dom_id2 = dom2.*;
+                if (dom_id2 == key) {
+                    continue;
+                }
+                if (!dom_dom.contains(dom_id2)) {
+                    is_idom = false;
+                    break;
+                }
+            }
+            if (is_idom) {
+                // Add edge from dom_id to key
+                var dom_node = tree_nodes.get(dom_id).?;
+                const child = tree_nodes.get(key).?;
+                try dom_node.children.append(child);
+                try tree_nodes.put(dom_id, dom_node);
+            }
+        }
+    }
+    return DominanceTree{
+        .nodes = tree_nodes,
+        .root = tree_nodes.get(0).?,
+    };
+}
+
+pub fn computeDominanceSet(allocator: std.mem.Allocator, graph: *const cfgir.ControlFlowGraph) !DominanceSet {
     const rpo = try computeReversePostOrder(allocator, graph);
     defer rpo.deinit();
-    var dom_tree = std.AutoHashMap(u32, *HashSet(u32)).init(allocator);
+    var dom_sets = std.AutoHashMap(u32, HashSet(u32)).init(allocator);
     var dom_0 = HashSet(u32).init(allocator);
     try dom_0.add(0);
-    try dom_tree.put(0, &dom_0);
+    try dom_sets.put(0, dom_0);
 
     for (1..rpo.items.len) |i| {
         const block_id = rpo.items[i];
@@ -19,7 +119,7 @@ pub fn computeDominaceTree(allocator: std.mem.Allocator, graph: *const cfgir.Con
         while (it.next()) |entry| {
             try dom.add(entry.*);
         }
-        try dom_tree.put(block_id, &dom);
+        try dom_sets.put(block_id, dom);
     }
 
     var changed = true;
@@ -30,26 +130,29 @@ pub fn computeDominaceTree(allocator: std.mem.Allocator, graph: *const cfgir.Con
             var tmp = HashSet(u32).init(allocator);
             defer tmp.deinit();
             const block = graph.blocks.get(block_id).?;
+
+            var block_idoms = dom_sets.get(block_id).?;
             switch (block.*) {
                 cfgir.BlockTag.Decision => {
-                    try predDomIntersec(&block.*.Decision.predecessors, &dom_tree, &tmp);
+                    try predDomIntersec(&block.*.Decision.predecessors, dom_sets, &tmp);
                 },
                 cfgir.BlockTag.Sequential => {
-                    try predDomIntersec(&block.*.Sequential.predecessors, &dom_tree, &tmp);
+                    try predDomIntersec(&block.*.Sequential.predecessors, dom_sets, &tmp);
                 },
             }
             try tmp.add(block_id);
-            if (!isSame(dom_tree.get(block_id).?, &tmp)) {
+            if (!isSame(block_idoms, tmp)) {
                 changed = true;
-                try setValues(&tmp, dom_tree.get(block_id).?);
+                try setValues(tmp, &block_idoms);
+                try dom_sets.put(block_id, block_idoms);
             }
         }
     }
 
-    return dom_tree;
+    return DominanceSet{ .sets = dom_sets };
 }
 
-fn setValues(src: *HashSet(u32), dest: *HashSet(u32)) !void {
+fn setValues(src: HashSet(u32), dest: *HashSet(u32)) !void {
     dest.clear();
     var it = src.iterator();
     while (it.next()) |item| {
@@ -57,14 +160,13 @@ fn setValues(src: *HashSet(u32), dest: *HashSet(u32)) !void {
     }
 }
 
-fn predDomIntersec(predecessors: *std.ArrayList(*cfgir.Block), dom_tree: *std.AutoHashMap(u32, *HashSet(u32)), dest: *HashSet(u32)) !void {
+fn predDomIntersec(predecessors: *const std.ArrayList(*cfgir.Block), dom_tree: std.AutoHashMap(u32, HashSet(u32)), dest: *HashSet(u32)) !void {
     if (predecessors.items.len == 0) {
         return;
     }
     const firstPredId = getBlockId(predecessors.items[0]);
     const firstPredDom = dom_tree.get(firstPredId).?;
     try setValues(firstPredDom, dest);
-
     for (1..predecessors.items.len) |i| {
         const predId = getBlockId(predecessors.items[i]);
 
@@ -85,7 +187,14 @@ fn getBlockId(block: *cfgir.Block) u32 {
     }
 }
 
-fn isSame(a: *HashSet(u32), b: *HashSet(u32)) bool {
+fn getBlockName(block: *cfgir.Block) []const u8 {
+    switch (block.*) {
+        cfgir.BlockTag.Decision => return block.*.Decision.name,
+        cfgir.BlockTag.Sequential => return block.*.Sequential.name,
+    }
+}
+
+fn isSame(a: HashSet(u32), b: HashSet(u32)) bool {
     if (a.len() != b.len()) {
         return false;
     }
@@ -138,6 +247,18 @@ fn dfs(block: *cfgir.Block, visited: *HashSet(u32), post_order: *std.ArrayList(u
 }
 
 pub fn print_dom_tree(tree: DominanceTree) void {
+    var it = tree.nodes.iterator();
+    while (it.next()) |entry| {
+        const key = entry.key_ptr;
+        const value = entry.value_ptr;
+        std.debug.print("Block {}: ", .{key.*});
+        for (value.*.*.children.items) |child| {
+            std.debug.print("{} ", .{child.*.id});
+        }
+        std.debug.print("\n", .{});
+    }
+}
+pub fn print_dom_set(tree: DominanceSet) void {
     var it = tree.iterator();
     while (it.next()) |entry| {
         const key = entry.key_ptr;
@@ -186,6 +307,6 @@ test "for " {
 
     const cfg = try cfgir.astStatementsToCFG(allocator, statements.items, "abc");
     //try printCfg(cfg);
-    const domTree = try computeDominaceTree(allocator, &cfg);
-    print_dom_tree(domTree);
+    const domTree = try computeDominanceSet(allocator, &cfg);
+    print_dom_set(domTree);
 }

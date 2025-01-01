@@ -40,7 +40,7 @@ pub const Parser = struct {
             self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect :, got {} at position {}", .{ colon, self.lexer.pos() });
             return Error.ParsingFailed;
         }
-        try self.expect(lex.TokenTag.new_line);
+
         const suite = try self.parseSuite();
         return ast.Def{ .name = self.code[identifier.raw.loc.start..identifier.raw.loc.end], .body = suite, .params = argumentNames };
     }
@@ -121,6 +121,16 @@ pub const Parser = struct {
         }
     }
     fn parseSuite(self: *Parser) anyerror!ast.Suite {
+        if (try self.lexer.peek() != .new_line) {
+            var statements = std.ArrayList(ast.Statement).init(self.allocator);
+            const statement = try self.parseSimpleStatement();
+            try statements.append(ast.Statement{ .simple_statement = statement });
+            try self.expect(lex.TokenTag.new_line);
+            return ast.Suite{
+                .statements = statements,
+            };
+        }
+        try self.expect(lex.TokenTag.new_line);
         try self.expect(lex.TokenTag.begin);
         var statements = std.ArrayList(ast.Statement).init(self.allocator);
         while (true) {
@@ -163,7 +173,6 @@ pub const Parser = struct {
         try self.expectRaw(RawToken.Tag.in);
         const expr = try self.parseExpr();
         try self.expectRaw(RawToken.Tag.colon);
-        try self.expect(lex.TokenTag.new_line);
         const suite = try self.parseSuite();
         return ast.ForInStatement{
             .var_name = self.code[ident.raw.loc.start..ident.raw.loc.end],
@@ -317,7 +326,6 @@ pub const Parser = struct {
         try self.expectRaw(RawToken.Tag.@"if");
         const condition = try self.parseExpr();
         try self.expectRaw(RawToken.Tag.colon);
-        try self.expect(lex.TokenTag.new_line);
         const suite = try self.parseSuite();
         const maybe_else = try self.lexer.peek();
         if (maybe_else != .raw or maybe_else.raw.tag != RawToken.Tag.@"else") {
@@ -328,7 +336,6 @@ pub const Parser = struct {
         }
         _ = try self.lexer.next();
         try self.expectRaw(RawToken.Tag.colon);
-        try self.expect(lex.TokenTag.new_line);
         const else_suite = try self.parseSuite();
         return ast.Statement{ .if_else_statement = ast.IfElseStatement{
             .condition = condition,

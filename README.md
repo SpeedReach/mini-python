@@ -37,3 +37,8 @@ to run the code generation tests. Your compiler is called with the
 filename, the generated code is then compiled with `gcc`, the
 executable is run, and the standard output is compared to the expected
 output.
+
+
+TODO
+ssa PHI args
+control flow graph handle return

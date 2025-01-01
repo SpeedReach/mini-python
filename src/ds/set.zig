@@ -44,5 +44,13 @@ pub fn HashSet(comptime T: type) type {
         pub fn isEmpty(self: Self) bool {
             return self.items.len == 0;
         }
+
+        pub fn debug(self: Self) void {
+            var it = self.items.keyIterator();
+            while (it.next()) |entry| {
+                std.debug.print("{any},", .{entry.*});
+            }
+            std.debug.print("\n", .{});
+        }
     };
 }

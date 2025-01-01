@@ -15,5 +15,5 @@ test {
     _ = @import("parser/parser.zig");
     _ = @import("parser/expr_parser.zig");
     _ = @import("ssa/construct.zig");
-    _ = @import("ssa/dominance_tree.zig");
+    _ = @import("ssa/dom_tree.zig");
 }
