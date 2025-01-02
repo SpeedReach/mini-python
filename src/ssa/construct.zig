@@ -18,10 +18,20 @@ const Error = error{
 };
 
 pub const AnnotatedCfg = struct {
+    args: std.ArrayList([]const u8),
     blocks: std.AutoHashMap(u32, *AnnotatedBlock),
     dom_tree: dom.DominanceTree,
     entry: u32,
     exit: u32,
+
+    pub fn deinit(self: *AnnotatedCfg, allocator: std.mem.Allocator) void {
+        self.args.deinit();
+        var it = self.blocks.iterator();
+        while (it.next()) |entry| {
+            allocator.free(entry.value_ptr.*);
+        }
+        self.blocks.deinit();
+    }
 };
 
 pub const AnnotatedBlockTag = enum { Sequential, Decision };
@@ -47,11 +57,11 @@ const AnnotatedContext = struct {
     main: AnnotatedCfg,
 
     const Self = @This();
-    pub fn deinit(self: Self) void {
+    pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
         self.global_vars.deinit();
         var it = self.functions.iterator();
         while (it.next()) |entry| {
-            entry.value_ptr.deinit();
+            entry.value_ptr.deinit(allocator);
         }
     }
 };
@@ -482,18 +492,19 @@ pub fn constructSSA(allocator: std.mem.Allocator, cfgIR: *const CfgIR) !ssa.Prog
     var functions = std.StringHashMap(AnnotatedCfg).init(allocator);
     var it = cfgIR.functions.iterator();
     while (it.next()) |entry| {
-        try functions.put(entry.key_ptr.*, try annotateCfg(allocator, &global_vars, entry.value_ptr));
+        const args = try entry.value_ptr.*.args.clone();
+        try functions.put(entry.key_ptr.*, try annotateCfg(allocator, &global_vars, args, entry.value_ptr));
     }
     const context = AnnotatedContext{
         .global_vars = global_vars,
         .functions = functions,
-        .main = try annotateCfg(allocator, &global_vars, &cfgIR.main),
+        .main = try annotateCfg(allocator, &global_vars, std.ArrayList([]const u8).init(allocator), &cfgIR.main),
     };
     var constructor = SSAConstructor.init(allocator, context);
     return try constructor.buildSSA();
 }
 
-fn annotateCfg(allocator: std.mem.Allocator, global_vars: *std.StringHashMap(void), cfg: *const cfgir.ControlFlowGraph) !AnnotatedCfg {
+fn annotateCfg(allocator: std.mem.Allocator, global_vars: *std.StringHashMap(void), args: std.ArrayList([]const u8), cfg: *const cfgir.ControlFlowGraph) !AnnotatedCfg {
     var blocks = std.AutoHashMap(u32, *AnnotatedBlock).init(allocator);
     var it = cfg.blocks.valueIterator();
     while (it.next()) |item| {
@@ -534,6 +545,7 @@ fn annotateCfg(allocator: std.mem.Allocator, global_vars: *std.StringHashMap(voi
         .entry = 0,
         .exit = math.maxInt(u32),
         .dom_tree = try dom.computeDominanceTree(allocator, cfg),
+        .args = args,
     };
     try insertPhis(global_vars, &annotated);
     return annotated;

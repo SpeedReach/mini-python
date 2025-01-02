@@ -30,8 +30,9 @@ pub const CFGConstructor = struct {
     current_block: *Block,
     end_block: *Block,
     built: bool,
+    args: std.ArrayList(Ident),
 
-    fn init(allocator: std.mem.Allocator, prefix: []const u8) !CFGConstructor {
+    fn init(allocator: std.mem.Allocator, prefix: []const u8, args: std.ArrayList(Ident)) !CFGConstructor {
         const block = try allocator.create(Block);
         var blocks = std.AutoHashMap(u32, *Block).init(allocator);
         block.* = Block{ .Sequential = NormalBlock.init(allocator, 0, try std.fmt.allocPrint(allocator, "{s}%{d}", .{ prefix, 0 })) };
@@ -39,16 +40,7 @@ pub const CFGConstructor = struct {
         end.* = Block{ .Sequential = NormalBlock.init(allocator, std.math.maxInt(u32), try std.fmt.allocPrint(allocator, "{s}%end", .{prefix})) };
         try blocks.put(0, block);
         try blocks.put(std.math.maxInt(u32), end);
-        return CFGConstructor{
-            .allocator = allocator,
-            .block_idx = 1,
-            .prefix = prefix,
-            .current_block = block,
-            .end_block = end,
-            .blocks = blocks,
-            .scope_control_stack = std.ArrayList(*Block).init(allocator),
-            .built = false,
-        };
+        return CFGConstructor{ .allocator = allocator, .block_idx = 1, .prefix = prefix, .current_block = block, .end_block = end, .blocks = blocks, .scope_control_stack = std.ArrayList(*Block).init(allocator), .built = false, .args = args };
     }
 
     pub fn deinit(self: *CFGConstructor) void {
@@ -61,6 +53,7 @@ pub const CFGConstructor = struct {
             block.deinit();
         }
         self.blocks.deinit();
+        self.args.deinit();
     }
 
     /// Build the ControlFlowGraph from the constructed blocks
@@ -80,6 +73,7 @@ pub const CFGConstructor = struct {
         self.current_block.Sequential.successor = self.end_block;
         try self.end_block.Sequential.predecessors.append(self.current_block);
         const cfg = ControlFlowGraph{
+            .args = self.args,
             .blocks = self.blocks,
             .entry = self.blocks.get(0).?,
             .exit = self.end_block,
@@ -316,9 +310,10 @@ pub const CFGConstructor = struct {
 
 pub fn astToCfgIR(allocator: std.mem.Allocator, ast_file: ast.AstFile) !*Program {
     var functions = std.StringHashMap(ControlFlowGraph).init(allocator);
-    const main = try astStatementsToCFG(allocator, ast_file.statements.items, "main");
+    const main = try astStatementsToCFG(allocator, std.ArrayList(Ident).init(allocator), ast_file.statements.items, "main");
     for (ast_file.defs.items) |def| {
-        var constructor = try CFGConstructor.init(allocator, def.name);
+        const args = try def.params.clone();
+        var constructor = try CFGConstructor.init(allocator, def.name, args);
         try constructor.addStatements(def.body.statements.items);
         try functions.put(def.name, try constructor.build());
     }
@@ -330,8 +325,8 @@ pub fn astToCfgIR(allocator: std.mem.Allocator, ast_file: ast.AstFile) !*Program
     return program;
 }
 
-pub fn astStatementsToCFG(allocator: std.mem.Allocator, statements: []ast.Statement, prefix: []const u8) !ControlFlowGraph {
-    var constructor = try CFGConstructor.init(allocator, prefix);
+pub fn astStatementsToCFG(allocator: std.mem.Allocator, args: std.ArrayList(Ident), statements: []ast.Statement, prefix: []const u8) !ControlFlowGraph {
+    var constructor = try CFGConstructor.init(allocator, prefix, args);
     try constructor.addStatements(statements);
     return constructor.build();
 }
@@ -355,6 +350,7 @@ fn formatForN(allocator: std.mem.Allocator, prefix: []const u8, blockIndex: u32)
 ///   main%<block_number>
 /// for example , the entry block should be named main%0
 pub const ControlFlowGraph = struct {
+    args: std.ArrayList(Ident),
     blocks: std.AutoHashMap(u32, *Block),
     entry: *Block,
     exit: *Block,
@@ -442,7 +438,7 @@ test "for " {
 
     try statements.append(ast.Statement{ .for_in_statement = outerFor });
 
-    const cfg = try astStatementsToCFG(allocator, statements.items, "abc");
+    const cfg = try astStatementsToCFG(allocator, std.ArrayList(Ident).init(allocator), statements.items, "abc");
     //try printCfg(cfg);
     try generateMermaidDiagram(cfg, std.io.getStdErr().writer());
 }

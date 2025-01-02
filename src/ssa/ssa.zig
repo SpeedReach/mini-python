@@ -68,6 +68,7 @@ pub const AssignValue = union(enum) {
     BinOp: BinOpExpr,
     Phi: PhiValues,
     FunctionCall: FunctionCallExpr,
+    FunctionArg: u8,
     ArrayRead: ArrayReadExpr,
     ArrayWrite: ArrayWriteExpr,
     // Load global var
@@ -213,6 +214,9 @@ fn printAssignValue(value: AssignValue) void {
                 std.debug.print(", ", .{});
             }
             std.debug.print(")", .{});
+        },
+        .FunctionArg => |function_arg| {
+            std.debug.print("arg {d}", .{function_arg});
         },
         .ArrayRead => |array_read| {
             printValue(array_read.array);
