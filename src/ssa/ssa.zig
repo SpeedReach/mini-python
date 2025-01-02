@@ -103,6 +103,7 @@ pub const ArrayReadExpr = struct {
 pub const BinOp = @import("../ast/ast.zig").BinOp;
 
 pub const PhiValues = struct {
+    base: []const u8,
     values: std.ArrayList(Value),
 };
 

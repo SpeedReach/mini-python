@@ -14,4 +14,3 @@ print("quelques valeurs de la suite de Fibonacci :")
 for n in [0, 1, 11, 42]:
     print(fib(n))
 
- 

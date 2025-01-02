@@ -11,6 +11,8 @@ const std = @import("std");
 const dom = @import("./dom_tree.zig");
 const VariableCounter = @import("./variable_counter.zig").VariableCounter;
 
+const HashSet = @import("../ds/set.zig").HashSet;
+
 const Error = error{
     Todo,
 };
@@ -30,13 +32,13 @@ pub const AnnotatedNormalBlock = struct {
     inner: *CfgNormalBlock,
     used_vars: std.StringHashMap(void),
     assigned_vars: std.StringHashMap(void),
-    phis: std.StringHashMap(void),
+    phis: std.StringHashMap(HashSet(u32)),
 };
 
 pub const AnnotatedDecisionBlock = struct {
     inner: *CfgDecisionBlock,
     used_vars: std.StringHashMap(void),
-    phis: std.StringHashMap(void),
+    phis: std.StringHashMap(HashSet(u32)),
 };
 
 const AnnotatedContext = struct {
@@ -93,7 +95,43 @@ pub const SSAConstructor = struct {
         var var_counter = VariableCounter.init(self.allocator);
         defer var_counter.deinit();
         try self.dfsBuildBlock(&cfg.blocks, &ssa_context.blocks, dom_node, &var_counter);
+        try setPhiInstValues(&cfg.blocks, &ssa_context.blocks);
         return ssa_context;
+    }
+
+    fn setPhiInstValues(ann_blocks: *const std.AutoHashMap(u32, *AnnotatedBlock), ssa_blocks: *const std.AutoHashMap(u32, *ssa.Block)) !void {
+        var it = ssa_blocks.valueIterator();
+        while (it.next()) |block_pp| {
+            switch (block_pp.*.*) {
+                ssa.BlockTag.Sequential => {
+                    const block = block_pp.*;
+                    const phis: std.StringHashMap(HashSet(u32)) = ann_blocks.get(block.*.Sequential.id).?.*.Sequential.phis;
+                    var insts: std.ArrayList(ssa.Instruction) = block.*.Sequential.instructions;
+                    for (0..insts.items.len) |i| {
+                        const inst = &insts.items[i];
+                        if (inst.* != .Assignment) {
+                            break;
+                        }
+                        if (inst.*.Assignment.rhs != .Phi) {
+                            break;
+                        }
+                        const phi_values = inst.*.Assignment.rhs.Phi;
+                        const phi_versions = phis.get(phi_values.base).?;
+                        var key_it = phi_versions.items.keyIterator();
+                        while (key_it.next()) |version| {
+                            std.debug.print("adding to {s} version {d}\n", .{ phi_values.base, version.* });
+                            try inst.*.Assignment.rhs.Phi.values.append(
+                                ssa.Value{ .Var = ssa.Variable{
+                                    .base = phi_values.base,
+                                    .version = version.*,
+                                } },
+                            );
+                        }
+                    }
+                },
+                ssa.BlockTag.Decision => |_| {},
+            }
+        }
     }
 
     fn dfsBuildBlock(
@@ -121,7 +159,7 @@ pub const SSAConstructor = struct {
             }
         }
 
-        try dest.put(dom_node.id, try self.buildBlock(self.allocator, block.*, var_counter));
+        try dest.put(dom_node.id, try self.buildBlock(self.allocator, blocks, block.*, var_counter));
         for (dom_node.children.items) |child| {
             try self.dfsBuildBlock(blocks, dest, child, var_counter);
         }
@@ -138,9 +176,33 @@ pub const SSAConstructor = struct {
         }
     }
 
+    fn setPhiValues(block: *AnnotatedBlock, counter: *const VariableCounter) !void {
+        switch (block.*) {
+            .Decision => {
+                var it = block.*.Decision.phis.keyIterator();
+                while (it.next()) |phi| {
+                    const latest = counter.getLatest(phi.*);
+                    if (latest != null) {
+                        try block.*.Decision.phis.getPtr(phi.*).?.*.add(latest.?.version);
+                    }
+                }
+            },
+            .Sequential => {
+                var it = block.*.Sequential.phis.keyIterator();
+                while (it.next()) |phi| {
+                    const latest = counter.getLatest(phi.*);
+                    if (latest != null) {
+                        try block.*.Sequential.phis.getPtr(phi.*).?.*.add(latest.?.version);
+                    }
+                }
+            },
+        }
+    }
+
     fn buildBlock(
         self: Self,
         allocator: std.mem.Allocator,
+        blocks: *const std.AutoHashMap(u32, *AnnotatedBlock),
         block: AnnotatedBlock,
         counter: *VariableCounter,
     ) !*ssa.Block {
@@ -159,6 +221,13 @@ pub const SSAConstructor = struct {
                     .instructions = instructions,
                     .predecessors = try getBlocksId(allocator, &block.Decision.inner.*.predecessors),
                 } };
+                const else_id = getBlockId(decision.inner.else_block.?);
+                const then_id = getBlockId(decision.inner.then_block.?);
+                const else_block = blocks.get(else_id).?;
+                const then_block = blocks.get(then_id).?;
+                try setPhiValues(else_block, counter);
+                try setPhiValues(then_block, counter);
+
                 return ssa_block;
             },
             .Sequential => |sequential| {
@@ -169,10 +238,17 @@ pub const SSAConstructor = struct {
                     try self.handleStatement(stmt, &instructions, counter);
                 }
 
-                var successor: u32 = std.math.maxInt(u32);
-                if (sequential.inner.*.successor != null) {
-                    successor = getBlockId(sequential.inner.*.successor.?);
+                if (sequential.inner.*.successor == null) {
+                    ssa_block.* = ssa.Block{ .Sequential = ssa.NormalBlock{
+                        .name = block.Sequential.inner.*.name,
+                        .id = block.Sequential.inner.*.id,
+                        .instructions = instructions,
+                        .predecessors = try getBlocksId(allocator, &block.Sequential.inner.*.predecessors),
+                        .successor = std.math.maxInt(u32),
+                    } };
+                    return ssa_block;
                 }
+                const successor = getBlockId(sequential.inner.*.successor.?);
                 ssa_block.* = ssa.Block{ .Sequential = ssa.NormalBlock{
                     .name = block.Sequential.inner.*.name,
                     .id = block.Sequential.inner.*.id,
@@ -180,6 +256,9 @@ pub const SSAConstructor = struct {
                     .predecessors = try getBlocksId(allocator, &block.Sequential.inner.*.predecessors),
                     .successor = successor,
                 } };
+
+                const successor_block = blocks.get(successor).?;
+                try setPhiValues(successor_block, counter);
 
                 return ssa_block;
             },
@@ -266,7 +345,7 @@ pub const SSAConstructor = struct {
         }
     }
 
-    fn renamePhis(allocator: std.mem.Allocator, phis: std.StringHashMap(void), dest: *std.ArrayList(ssa.Instruction), vars: *VariableCounter) !void {
+    fn renamePhis(allocator: std.mem.Allocator, phis: std.StringHashMap(HashSet(u32)), dest: *std.ArrayList(ssa.Instruction), vars: *VariableCounter) !void {
         var it = phis.keyIterator();
         while (it.next()) |phi| {
             const name = try vars.add(phi.*);
@@ -274,6 +353,7 @@ pub const SSAConstructor = struct {
                 .Assignment = ssa.Assignment{ .lhs = ssa.Value{
                     .Var = name,
                 }, .rhs = ssa.AssignValue{ .Phi = ssa.PhiValues{
+                    .base = phi.*,
                     .values = std.ArrayList(ssa.Value).init(allocator),
                 } } },
             };
@@ -427,7 +507,7 @@ fn annotateCfg(allocator: std.mem.Allocator, global_vars: *std.StringHashMap(voi
                     .Decision = AnnotatedDecisionBlock{
                         .inner = &item.*.*.Decision,
                         .used_vars = try used_vars.clone(),
-                        .phis = std.StringHashMap(void).init(allocator),
+                        .phis = std.StringHashMap(HashSet(u32)).init(allocator),
                     },
                 };
                 try blocks.put(item.*.*.Decision.id, block);
@@ -442,7 +522,7 @@ fn annotateCfg(allocator: std.mem.Allocator, global_vars: *std.StringHashMap(voi
                         .inner = &item.*.*.Sequential,
                         .used_vars = try used_vars.clone(),
                         .assigned_vars = try assigned_vars.clone(),
-                        .phis = std.StringHashMap(void).init(allocator),
+                        .phis = std.StringHashMap(HashSet(u32)).init(allocator),
                     },
                 };
                 try blocks.put(item.*.*.Sequential.id, block);
@@ -469,7 +549,8 @@ fn insertPhis(global_var: *std.StringHashMap(void), cfg: *AnnotatedCfg) !void {
                     if (global_var.contains(used_var.*)) {
                         continue;
                     }
-                    try block.*.*.Decision.phis.put(used_var.*, void{});
+                    const phi_values = HashSet(u32).init(block.*.*.Decision.phis.allocator);
+                    try block.*.*.Decision.phis.put(used_var.*, phi_values);
                 }
             },
             AnnotatedBlockTag.Sequential => {
@@ -478,7 +559,8 @@ fn insertPhis(global_var: *std.StringHashMap(void), cfg: *AnnotatedCfg) !void {
                     if (global_var.contains(used_var.*)) {
                         continue;
                     }
-                    try block.*.*.Sequential.phis.put(used_var.*, void{});
+                    const phi_values = HashSet(u32).init(block.*.*.Sequential.phis.allocator);
+                    try block.*.*.Sequential.phis.put(used_var.*, phi_values);
                 }
             },
         }
