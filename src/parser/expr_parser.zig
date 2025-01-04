@@ -75,6 +75,12 @@ pub const ExprParser = struct {
                 inner.* = try self.parse(7);
                 return ast.Expr{ .unary_expr = inner };
             },
+            RawTokenTag.true => {
+                return ast.Expr{ .@"const" = ast.Const{ .boolean = true } };
+            },
+            RawTokenTag.false => {
+                return ast.Expr{ .@"const" = ast.Const{ .boolean = false } };
+            },
             else => {
                 std.debug.print("unexpected token: {} at {d}\n", .{ raw.tag, self.lexer.pos() });
                 return Error.InvalidToken;
@@ -111,6 +117,7 @@ pub const ExprParser = struct {
             return Error.InvalidToken;
         }
         if (token.raw.tag != expected) {
+            std.debug.print("expected token: {} at {d} but got {}\n", .{ expected, self.lexer.pos(), token.raw.tag });
             return Error.InvalidToken;
         }
     }

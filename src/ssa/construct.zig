@@ -18,6 +18,7 @@ const Error = error{
 };
 
 pub const AnnotatedCfg = struct {
+    name: []const u8,
     args: std.ArrayList([]const u8),
     blocks: std.AutoHashMap(u32, *AnnotatedBlock),
     dom_tree: dom.DominanceTree,
@@ -98,13 +99,16 @@ pub const SSAConstructor = struct {
 
     fn buildCfg(self: Self, cfg: *const AnnotatedCfg) !ssa.FunctionContext {
         var ssa_context = ssa.FunctionContext{
+            .name = cfg.name,
             .blocks = std.AutoHashMap(u32, *ssa.Block).init(self.allocator),
         };
+
         const dom_tree = cfg.dom_tree;
         const dom_node = dom_tree.root;
         var var_counter = VariableCounter.init(self.allocator);
         defer var_counter.deinit();
-        try self.dfsBuildBlock(&cfg.blocks, &ssa_context.blocks, dom_node, &var_counter);
+
+        try self.dfsBuildBlock(&cfg.args, &cfg.blocks, &ssa_context.blocks, dom_node, &var_counter);
         try setPhiInstValues(&cfg.blocks, &ssa_context.blocks);
         return ssa_context;
     }
@@ -129,7 +133,6 @@ pub const SSAConstructor = struct {
                         const phi_versions = phis.get(phi_values.base).?;
                         var key_it = phi_versions.items.keyIterator();
                         while (key_it.next()) |version| {
-                            std.debug.print("adding to {s} version {d}\n", .{ phi_values.base, version.* });
                             try inst.*.Assignment.rhs.Phi.values.append(
                                 ssa.Value{ .Var = ssa.Variable{
                                     .base = phi_values.base,
@@ -146,9 +149,10 @@ pub const SSAConstructor = struct {
 
     fn dfsBuildBlock(
         self: Self,
+        args: ?*const std.ArrayList([]const u8),
         blocks: *const std.AutoHashMap(u32, *AnnotatedBlock),
         dest: *std.AutoHashMap(u32, *ssa.Block),
-        dom_node: *dom.DominanceNode,
+        dom_node: *const dom.DominanceNode,
         var_counter: *VariableCounter,
     ) !void {
         const block = blocks.get(dom_node.id).?;
@@ -168,10 +172,11 @@ pub const SSAConstructor = struct {
                 }
             }
         }
+        const entry_block = try self.buildBlock(self.allocator, args, blocks, block.*, var_counter);
 
-        try dest.put(dom_node.id, try self.buildBlock(self.allocator, blocks, block.*, var_counter));
+        try dest.put(dom_node.id, entry_block);
         for (dom_node.children.items) |child| {
-            try self.dfsBuildBlock(blocks, dest, child, var_counter);
+            try self.dfsBuildBlock(null, blocks, dest, child, var_counter);
         }
 
         if (need_pop) {
@@ -212,6 +217,7 @@ pub const SSAConstructor = struct {
     fn buildBlock(
         self: Self,
         allocator: std.mem.Allocator,
+        args: ?*const std.ArrayList([]const u8),
         blocks: *const std.AutoHashMap(u32, *AnnotatedBlock),
         block: AnnotatedBlock,
         counter: *VariableCounter,
@@ -220,7 +226,17 @@ pub const SSAConstructor = struct {
         switch (block) {
             .Decision => |decision| {
                 var instructions = std.ArrayList(ssa.Instruction).init(allocator);
+
                 try renamePhis(allocator, decision.phis, &instructions, counter);
+                if (args != null) {
+                    var i: u8 = 0;
+                    for (args.?.items) |arg| {
+                        try instructions.append(ssa.Instruction{ .Assignment = ssa.Assignment{ .variable = try counter.add(arg), .rhs = ssa.AssignValue{
+                            .FunctionArg = i,
+                        } } });
+                        i += 1;
+                    }
+                }
                 const condition_val = try self.handleExpr(&decision.inner.condition, &instructions, counter);
                 ssa_block.* = ssa.Block{ .Decision = ssa.DecisionBlock{
                     .id = block.Decision.inner.*.id,
@@ -244,6 +260,19 @@ pub const SSAConstructor = struct {
                 var instructions = std.ArrayList(ssa.Instruction).init(allocator);
 
                 try renamePhis(allocator, sequential.phis, &instructions, counter);
+                if (args != null) {
+                    var i: u8 = 0;
+                    for (args.?.items) |arg| {
+                        try instructions.append(ssa.Instruction{ .Assignment = ssa.Assignment{
+                            .variable = try counter.add(arg),
+                            .rhs = ssa.AssignValue{
+                                .FunctionArg = i,
+                            },
+                        } });
+                        i += 1;
+                    }
+                }
+
                 for (sequential.inner.*.statements.items) |stmt| {
                     try self.handleStatement(stmt, &instructions, counter);
                 }
@@ -287,11 +316,9 @@ pub const SSAConstructor = struct {
                     } };
                     try dest.append(inst);
                 } else {
-                    const lhs = ssa.Value{
-                        .Var = try vars.add(assign.lhs),
-                    };
+                    const lhs = try vars.add(assign.lhs);
                     const inst = ssa.Instruction{ .Assignment = ssa.Assignment{
-                        .lhs = lhs,
+                        .variable = lhs,
                         .rhs = ssa.AssignValue{
                             .Value = rhs,
                         },
@@ -320,11 +347,9 @@ pub const SSAConstructor = struct {
                     } };
                     try dest.append(inst);
                 } else {
-                    const new_value = ssa.Value{
-                        .Var = try vars.add(array_root.?),
-                    };
+                    const new_value = try vars.add(array_root.?);
                     const inst = ssa.Instruction{ .Assignment = ssa.Assignment{
-                        .lhs = new_value,
+                        .variable = new_value,
                         .rhs = ssa.AssignValue{ .ArrayWrite = ssa.ArrayWriteExpr{
                             .array = array,
                             .idx = idx,
@@ -342,7 +367,7 @@ pub const SSAConstructor = struct {
             .expr => |expr| {
                 const value = try self.handleExpr(expr, dest, vars);
                 const inst = ssa.Instruction{ .Assignment = ssa.Assignment{
-                    .lhs = ssa.Value{ .Var = try vars.add("tmp") },
+                    .variable = try vars.add("tmp"),
                     .rhs = ssa.AssignValue{ .Value = value },
                 } };
                 try dest.append(inst);
@@ -360,9 +385,7 @@ pub const SSAConstructor = struct {
         while (it.next()) |phi| {
             const name = try vars.add(phi.*);
             const inst = ssa.Instruction{
-                .Assignment = ssa.Assignment{ .lhs = ssa.Value{
-                    .Var = name,
-                }, .rhs = ssa.AssignValue{ .Phi = ssa.PhiValues{
+                .Assignment = ssa.Assignment{ .variable = name, .rhs = ssa.AssignValue{ .Phi = ssa.PhiValues{
                     .base = phi.*,
                     .values = std.ArrayList(ssa.Value).init(allocator),
                 } } },
@@ -376,9 +399,9 @@ pub const SSAConstructor = struct {
             ast.ExprTag.bin_op => {
                 const lhs = try self.handleExpr(expr.*.bin_op.lhs, dest, vars);
                 const rhs = try self.handleExpr(expr.*.bin_op.rhs, dest, vars);
-                const tmp = ssa.Value{ .Var = try vars.add("tmp") };
+                const tmp = try vars.add("tmp");
                 const inst = ssa.Instruction{ .Assignment = ssa.Assignment{
-                    .lhs = tmp,
+                    .variable = tmp,
                     .rhs = ssa.AssignValue{ .BinOp = ssa.BinOpExpr{
                         .lhs = lhs,
                         .rhs = rhs,
@@ -386,17 +409,17 @@ pub const SSAConstructor = struct {
                     } },
                 } };
                 try dest.append(inst);
-                return tmp;
+                return ssa.Value{ .Var = tmp };
             },
             ast.ExprTag.ident => {
                 const is_global_var = self.context.global_vars.contains(expr.*.ident);
                 if (is_global_var) {
-                    const tmp = ssa.Value{ .Var = try vars.add("tmp") };
-                    const load_inst = ssa.Instruction{ .Assignment = ssa.Assignment{ .lhs = tmp, .rhs = ssa.AssignValue{
+                    const tmp = try vars.add("tmp");
+                    const load_inst = ssa.Instruction{ .Assignment = ssa.Assignment{ .variable = tmp, .rhs = ssa.AssignValue{
                         .Load = expr.*.ident,
                     } } };
                     try dest.append(load_inst);
-                    return tmp;
+                    return ssa.Value{ .Var = tmp };
                 } else {
                     return ssa.Value{ .Var = try vars.getLatestOrAdd(expr.*.ident) };
                 }
@@ -409,54 +432,54 @@ pub const SSAConstructor = struct {
                 for (expr.*.function_call.args.items) |arg| {
                     try args.append(try self.handleExpr(arg, dest, vars));
                 }
-                const tmp = ssa.Value{ .Var = try vars.add("tmp") };
-                const inst = ssa.Instruction{ .Assignment = ssa.Assignment{ .lhs = tmp, .rhs = ssa.AssignValue{ .FunctionCall = ssa.FunctionCallExpr{
+                const tmp = try vars.add("tmp");
+                const inst = ssa.Instruction{ .Assignment = ssa.Assignment{ .variable = tmp, .rhs = ssa.AssignValue{ .FunctionCall = ssa.FunctionCallExpr{
                     .name = expr.function_call.name,
                     .args = args,
                 } } } };
                 try dest.append(inst);
-                return tmp;
+                return ssa.Value{ .Var = tmp };
             },
             ast.ExprTag.list_access => {
                 const list = try self.handleExpr(expr.*.list_access.list, dest, vars);
                 const idx = try self.handleExpr(expr.*.list_access.idx, dest, vars);
-                const tmp = ssa.Value{ .Var = try vars.add("tmp") };
-                const inst = ssa.Instruction{ .Assignment = ssa.Assignment{ .lhs = tmp, .rhs = ssa.AssignValue{ .ArrayRead = ssa.ArrayReadExpr{
+                const tmp = try vars.add("tmp");
+                const inst = ssa.Instruction{ .Assignment = ssa.Assignment{ .variable = tmp, .rhs = ssa.AssignValue{ .ArrayRead = ssa.ArrayReadExpr{
                     .array = list,
                     .idx = idx,
                 } } } };
                 try dest.append(inst);
-                return tmp;
+                return ssa.Value{ .Var = tmp };
             },
             ast.ExprTag.list_declare => {
                 var values = std.ArrayList(ssa.Value).init(self.allocator);
                 for (expr.*.list_declare.values.items) |item| {
                     try values.append(try self.handleExpr(item, dest, vars));
                 }
-                const tmp = ssa.Value{ .Var = try vars.add("tmp") };
-                const inst = ssa.Instruction{ .Assignment = ssa.Assignment{ .lhs = tmp, .rhs = ssa.AssignValue{
+                const tmp = try vars.add("tmp");
+                const inst = ssa.Instruction{ .Assignment = ssa.Assignment{ .variable = tmp, .rhs = ssa.AssignValue{
                     .ListValue = values,
                 } } };
                 try dest.append(inst);
-                return tmp;
+                return ssa.Value{ .Var = tmp };
             },
             ast.ExprTag.not_expr => {
                 const inner = try self.handleExpr(expr.*.not_expr, dest, vars);
-                const tmp = ssa.Value{ .Var = try vars.add("tmp") };
-                const inst = ssa.Instruction{ .Assignment = ssa.Assignment{ .lhs = tmp, .rhs = ssa.AssignValue{
+                const tmp = try vars.add("tmp");
+                const inst = ssa.Instruction{ .Assignment = ssa.Assignment{ .variable = tmp, .rhs = ssa.AssignValue{
                     .Not = inner,
                 } } };
                 try dest.append(inst);
-                return tmp;
+                return ssa.Value{ .Var = tmp };
             },
             ast.ExprTag.unary_expr => {
                 const inner = try self.handleExpr(expr.*.unary_expr, dest, vars);
-                const tmp = ssa.Value{ .Var = try vars.add("tmp") };
-                const inst = ssa.Instruction{ .Assignment = ssa.Assignment{ .lhs = tmp, .rhs = ssa.AssignValue{
+                const tmp = try vars.add("tmp");
+                const inst = ssa.Instruction{ .Assignment = ssa.Assignment{ .variable = tmp, .rhs = ssa.AssignValue{
                     .Unary = inner,
                 } } };
                 try dest.append(inst);
-                return tmp;
+                return ssa.Value{ .Var = tmp };
             },
         }
     }
@@ -541,6 +564,7 @@ fn annotateCfg(allocator: std.mem.Allocator, global_vars: *std.StringHashMap(voi
         }
     }
     var annotated = AnnotatedCfg{
+        .name = cfg.name,
         .blocks = blocks,
         .entry = 0,
         .exit = math.maxInt(u32),

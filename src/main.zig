@@ -6,8 +6,9 @@ const cfgir = @import("cfgir/cfgir.zig");
 const parse = @import("parser/parser.zig");
 const dom = @import("ssa/dom_tree.zig");
 const ssa = @import("ssa/ssa.zig");
+const codegen = @import("codegen/codegen.zig");
 
-pub fn compile(code: [:0]const u8) !void {
+pub fn compile(out: std.io.AnyWriter, code: [:0]const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -19,6 +20,7 @@ pub fn compile(code: [:0]const u8) !void {
 
     const cfg = try cfgir.astToCfgIR(allocator, ast_file);
     const ssa_ir = try ssa.construct.constructSSA(allocator, cfg);
+    try codegen.generate(out, ssa_ir);
     ssa.print(ssa_ir);
 }
 
@@ -41,5 +43,9 @@ pub fn main() !void {
 
     const imm_buffer: [:0]const u8 = @ptrCast(buffer);
 
-    try compile(imm_buffer);
+    const out_file = try std.fs.cwd().createFile(
+        "asm.S",
+        .{ .read = true },
+    );
+    try compile(out_file.writer().any(), imm_buffer);
 }

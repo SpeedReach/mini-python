@@ -9,6 +9,7 @@ pub const Program = struct {
 };
 
 pub const FunctionContext = struct {
+    name: []const u8,
     blocks: std.AutoHashMap(u32, *Block),
 };
 
@@ -47,9 +48,9 @@ pub const DecisionBlock = struct {
 pub const Instruction = union(enum) {
     Assignment: Assignment,
     Return: Value,
-    // Store to global var
+    /// Store to global var
     Store: StoreInstruction,
-    // Write to global var array
+    /// Write to global var array
     WriteArr: ArrayWriteExpr,
     Print: Value,
 };
@@ -60,7 +61,7 @@ pub const StoreInstruction = struct {
 };
 
 pub const Assignment = struct {
-    lhs: Value,
+    variable: Variable,
     rhs: AssignValue,
 };
 
@@ -168,7 +169,7 @@ fn printInstruction(instruction: Instruction) void {
         },
         .Assignment => |assignment| {
             std.debug.print("    ", .{});
-            printValue(assignment.lhs);
+            printVariable(assignment.variable);
             std.debug.print(" = ", .{});
             printAssignValue(assignment.rhs);
             std.debug.print("\n", .{});
@@ -274,7 +275,11 @@ fn printValue(value: Value) void {
             }
         },
         .Var => |variable| {
-            std.debug.print("{s}_{d}", .{ variable.base, variable.version });
+            printVariable(variable);
         },
     }
+}
+
+fn printVariable(variable: Variable) void {
+    std.debug.print("{s}_{d}", .{ variable.base, variable.version });
 }

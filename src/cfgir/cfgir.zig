@@ -35,9 +35,9 @@ pub const CFGConstructor = struct {
     fn init(allocator: std.mem.Allocator, prefix: []const u8, args: std.ArrayList(Ident)) !CFGConstructor {
         const block = try allocator.create(Block);
         var blocks = std.AutoHashMap(u32, *Block).init(allocator);
-        block.* = Block{ .Sequential = NormalBlock.init(allocator, 0, try std.fmt.allocPrint(allocator, "{s}%{d}", .{ prefix, 0 })) };
+        block.* = Block{ .Sequential = NormalBlock.init(allocator, 0, try std.fmt.allocPrint(allocator, "{s}_{d}_entry", .{ prefix, 0 })) };
         const end = try allocator.create(Block);
-        end.* = Block{ .Sequential = NormalBlock.init(allocator, std.math.maxInt(u32), try std.fmt.allocPrint(allocator, "{s}%end", .{prefix})) };
+        end.* = Block{ .Sequential = NormalBlock.init(allocator, std.math.maxInt(u32), try std.fmt.allocPrint(allocator, "{s}_end", .{prefix})) };
         try blocks.put(0, block);
         try blocks.put(std.math.maxInt(u32), end);
         return CFGConstructor{ .allocator = allocator, .block_idx = 1, .prefix = prefix, .current_block = block, .end_block = end, .blocks = blocks, .scope_control_stack = std.ArrayList(*Block).init(allocator), .built = false, .args = args };
@@ -73,6 +73,7 @@ pub const CFGConstructor = struct {
         self.current_block.Sequential.successor = self.end_block;
         try self.end_block.Sequential.predecessors.append(self.current_block);
         const cfg = ControlFlowGraph{
+            .name = self.prefix,
             .args = self.args,
             .blocks = self.blocks,
             .entry = self.blocks.get(0).?,
@@ -145,7 +146,7 @@ pub const CFGConstructor = struct {
     fn createDecisionBlock(self: *CFGConstructor, name: []const u8, condition: ast.Expr) !*Block {
         const block = try self.allocator.create(Block);
         block.* = Block{
-            .Decision = try DecisionBlock.init(self.allocator, self.block_idx, try std.fmt.allocPrint(self.allocator, "{s}%{d}%{s}", .{ self.prefix, self.block_idx, name }), condition),
+            .Decision = try DecisionBlock.init(self.allocator, self.block_idx, try std.fmt.allocPrint(self.allocator, "{s}_{d}_{s}", .{ self.prefix, self.block_idx, name }), condition),
         };
         try self.blocks.put(self.block_idx, block);
         self.block_idx += 1;
@@ -154,7 +155,7 @@ pub const CFGConstructor = struct {
 
     fn createSequentialBlock(self: *CFGConstructor, name: []const u8) !*Block {
         const block = try self.allocator.create(Block);
-        block.* = Block{ .Sequential = NormalBlock.init(self.allocator, self.block_idx, try std.fmt.allocPrint(self.allocator, "{s}%{d}%{s}", .{ self.prefix, self.block_idx, name })) };
+        block.* = Block{ .Sequential = NormalBlock.init(self.allocator, self.block_idx, try std.fmt.allocPrint(self.allocator, "{s}_{d}_{s}", .{ self.prefix, self.block_idx, name })) };
         try self.blocks.put(self.block_idx, block);
         self.block_idx += 1;
         return block;
@@ -178,7 +179,7 @@ pub const CFGConstructor = struct {
         try self.addStatements(statement.body.statements.items);
 
         const exit_block = try self.allocator.create(Block);
-        exit_block.* = Block{ .Sequential = NormalBlock.init(self.allocator, self.block_idx, try std.fmt.allocPrint(self.allocator, "{s}%{d}ifExit", .{ self.prefix, self.block_idx })) };
+        exit_block.* = Block{ .Sequential = NormalBlock.init(self.allocator, self.block_idx, try std.fmt.allocPrint(self.allocator, "{s}_{d}ifExit", .{ self.prefix, self.block_idx })) };
         try self.blocks.put(self.block_idx, exit_block);
         self.block_idx += 1;
 
@@ -224,7 +225,7 @@ pub const CFGConstructor = struct {
             .Decision = try DecisionBlock.init(
                 self.allocator,
                 self.block_idx,
-                try std.fmt.allocPrint(self.allocator, "{s}%{d}%forCondBlock", .{ self.prefix, self.block_idx }),
+                try std.fmt.allocPrint(self.allocator, "{s}_{d}_forCondBlock", .{ self.prefix, self.block_idx }),
                 condition,
             ),
         };
@@ -237,7 +238,7 @@ pub const CFGConstructor = struct {
         // forBody, the block that contains the body of the for loop
         // is executed if the forConditionBlock is true
         var for_body = try self.allocator.create(Block);
-        for_body.* = Block{ .Sequential = NormalBlock.init(self.allocator, self.block_idx, try std.fmt.allocPrint(self.allocator, "{s}%{d}forBody", .{ self.prefix, self.block_idx })) };
+        for_body.* = Block{ .Sequential = NormalBlock.init(self.allocator, self.block_idx, try std.fmt.allocPrint(self.allocator, "{s}_{d}forBody", .{ self.prefix, self.block_idx })) };
         try self.blocks.put(self.block_idx, for_body);
         self.block_idx += 1;
         // link forConditionBlock to forBody when the condition is true
@@ -294,7 +295,7 @@ pub const CFGConstructor = struct {
         exit_block.* = Block{
             .Sequential = NormalBlock.init(self.allocator, self.block_idx, try std.fmt.allocPrint(
                 self.allocator,
-                "{s}%forexit%{d}",
+                "{s}_forexit_{d}",
                 .{ self.prefix, self.block_idx },
             )),
         };
@@ -336,11 +337,11 @@ fn intToString(allocator: std.mem.Allocator, int: u32) ![]u8 {
 }
 
 fn formatForIndex(allocator: std.mem.Allocator, prefix: []const u8, blockIndex: u32) ![]u8 {
-    return std.fmt.allocPrint(allocator, "{s}%{d}forIndex", .{ prefix, blockIndex });
+    return std.fmt.allocPrint(allocator, "{s}_{d}forIndex", .{ prefix, blockIndex });
 }
 
 fn formatForN(allocator: std.mem.Allocator, prefix: []const u8, blockIndex: u32) ![]u8 {
-    return std.fmt.allocPrint(allocator, "{s}%{d}forN", .{ prefix, blockIndex });
+    return std.fmt.allocPrint(allocator, "{s}_{d}forN", .{ prefix, blockIndex });
 }
 
 /// Block naming:
@@ -350,6 +351,7 @@ fn formatForN(allocator: std.mem.Allocator, prefix: []const u8, blockIndex: u32)
 ///   main%<block_number>
 /// for example , the entry block should be named main%0
 pub const ControlFlowGraph = struct {
+    name: []const u8,
     args: std.ArrayList(Ident),
     blocks: std.AutoHashMap(u32, *Block),
     entry: *Block,

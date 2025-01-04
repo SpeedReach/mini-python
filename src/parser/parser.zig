@@ -227,7 +227,7 @@ pub const Parser = struct {
                         } };
                     },
                     else => {
-                        try self.expect(lex.TokenTag.new_line);
+                        //try self.expect(lex.TokenTag.new_line);
                         return ast.SimpleStatement{
                             .expr = left,
                         };
