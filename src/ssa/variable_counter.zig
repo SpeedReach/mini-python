@@ -3,13 +3,15 @@ const std = @import("std");
 const Variable = @import("./ssa.zig").Variable;
 
 pub const VariableCounter = struct {
+    global_vars: *const std.StringHashMap(void),
     counter: std.StringHashMap(u32),
     stack: std.StringHashMap(std.ArrayList(u32)),
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator) VariableCounter {
+    pub fn init(allocator: std.mem.Allocator, global_vars: *const std.StringHashMap(void)) VariableCounter {
         return VariableCounter{
+            .global_vars = global_vars,
             .counter = std.StringHashMap(u32).init(allocator),
             .stack = std.StringHashMap(std.ArrayList(u32)).init(allocator),
         };
@@ -33,6 +35,10 @@ pub const VariableCounter = struct {
             return null;
         }
         return Variable{ .base = base, .version = version.? };
+    }
+
+    pub fn isGlobal(self: Self, base: []const u8) bool {
+        return self.global_vars.get(base) != null;
     }
 
     pub fn getLatestOrAdd(self: *Self, base: []const u8) !Variable {

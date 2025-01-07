@@ -41,7 +41,10 @@ pub const Parser = struct {
             return Error.ParsingFailed;
         }
 
-        const suite = try self.parseSuite();
+        var suite = try self.parseSuite();
+        const return_expr = try self.allocator.create(ast.Expr);
+        return_expr.* = ast.Expr{ .@"const" = ast.Const.none };
+        try suite.statements.append(ast.Statement{ .simple_statement = ast.SimpleStatement{ .@"return" = return_expr } });
         return ast.Def{ .name = self.code[identifier.raw.loc.start..identifier.raw.loc.end], .body = suite, .params = argumentNames };
     }
 
@@ -220,7 +223,7 @@ pub const Parser = struct {
                     ast.ExprTag.list_access => |list_access| {
                         try self.expectRaw(RawToken.Tag.equal);
                         const right = try self.parseExpr();
-                        return ast.SimpleStatement{ .assign_list = ast.ListAssignent{
+                        return ast.SimpleStatement{ .assign_list = ast.ListWrite{
                             .lhs = list_access.list,
                             .idx = list_access.idx,
                             .rhs = right,

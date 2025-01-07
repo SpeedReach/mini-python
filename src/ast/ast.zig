@@ -25,7 +25,7 @@ pub const SimpleStatement = union(SimpleStatementTag) {
     /// ⟨ident⟩ = ⟨expr⟩
     assign: SimpleAssignment,
     /// ⟨expr ⟩ [ ⟨expr ⟩ ] =⟨expr ⟩
-    assign_list: ListAssignent,
+    assign_list: ListWrite,
     /// print ( ⟨expr ⟩ )
     print: Print,
     /// ⟨expr ⟩
@@ -37,7 +37,7 @@ pub const SimpleAssignment = struct {
     rhs: *Expr,
 };
 
-pub const ListAssignent = struct {
+pub const ListWrite = struct {
     lhs: *Expr,
     idx: *Expr,
     rhs: *Expr,

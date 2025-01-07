@@ -205,11 +205,22 @@ pub const CFGConstructor = struct {
             .lhs = index_ident,
             .rhs = index_expr,
         } });
+
+        // _iterable = iterable
+        const iterable_ident = try std.fmt.allocPrint(self.allocator, "{s}_{d}_iterable", .{ self.prefix, self.block_idx });
+        const iterable_assign = ast.SimpleStatement{ .assign = ast.SimpleAssignment{
+            .lhs = iterable_ident,
+            .rhs = statement.iterable,
+        } };
+        try self.current_block.Sequential.statements.append(iterable_assign);
+
         // n = len(iterable)
         const nIdent = try formatForN(self.allocator, self.prefix, self.block_idx);
         const len_expr = try self.allocator.create(ast.Expr);
+        const iterable_expr = try self.allocator.create(ast.Expr);
+        iterable_expr.* = ast.Expr{ .ident = iterable_ident };
         var len_args = try std.ArrayList(*Expr).initCapacity(self.allocator, 1);
-        try len_args.insert(0, statement.iterable);
+        try len_args.insert(0, iterable_expr);
         len_expr.* = ast.Expr{ .function_call = ast.FunctionCall{ .args = len_args, .name = "len" } };
         try self.current_block.Sequential.statements.append(ast.SimpleStatement{ .assign = ast.SimpleAssignment{ .lhs = nIdent, .rhs = len_expr } });
 
@@ -247,6 +258,8 @@ pub const CFGConstructor = struct {
 
         // At the start of the forBody, we need to assign the item of the iterable to the loop variable
         // a = iterable[i]
+        const iterable_ident_expr = try self.allocator.create(ast.Expr);
+        iterable_ident_expr.* = ast.Expr{ .ident = iterable_ident };
         const loop_var_ident = try self.allocator.create(ast.Expr);
         loop_var_ident.* = ast.Expr{ .ident = statement.var_name };
         const loop_var_index = try self.allocator.create(ast.Expr);
@@ -254,7 +267,7 @@ pub const CFGConstructor = struct {
         const loop_var_expr = try self.allocator.create(ast.Expr);
         loop_var_expr.* = ast.Expr{
             .list_access = ast.ListAccess{
-                .list = statement.iterable,
+                .list = iterable_ident_expr,
                 .idx = loop_var_index,
             },
         };
@@ -314,7 +327,8 @@ pub fn astToCfgIR(allocator: std.mem.Allocator, ast_file: ast.AstFile) !*Program
     const main = try astStatementsToCFG(allocator, std.ArrayList(Ident).init(allocator), ast_file.statements.items, "main");
     for (ast_file.defs.items) |def| {
         const args = try def.params.clone();
-        var constructor = try CFGConstructor.init(allocator, def.name, args);
+        const name = try std.fmt.allocPrint(allocator, "__{s}", .{def.name});
+        var constructor = try CFGConstructor.init(allocator, name, args);
         try constructor.addStatements(def.body.statements.items);
         try functions.put(def.name, try constructor.build());
     }

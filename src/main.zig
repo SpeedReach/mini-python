@@ -7,21 +7,27 @@ const parse = @import("parser/parser.zig");
 const dom = @import("ssa/dom_tree.zig");
 const ssa = @import("ssa/ssa.zig");
 const codegen = @import("codegen/codegen.zig");
+const opt = @import("optimization/optimization.zig");
 
 pub fn compile(out: std.io.AnyWriter, code: [:0]const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
     var parser = parse.Parser.init(allocator, code);
-    const ast_file = parser.parse() catch |err| {
-        std.debug.print("Error {}: {s}\n", .{ err, parser.diagnostics });
-        return;
-    };
+    const ast_file = try parser.parse();
+    //  catch |err| {
+    //     std.debug.print("Error {}: {s}\n", .{ err, parser.diagnostics });
+    //     return;
+    // };
 
     const cfg = try cfgir.astToCfgIR(allocator, ast_file);
-    const ssa_ir = try ssa.construct.constructSSA(allocator, cfg);
-    try codegen.generate(out, ssa_ir);
+    var ssa_ir = try ssa.construct.constructSSA(allocator, cfg);
     ssa.print(ssa_ir);
+    _ = try opt.const_fold.apply(allocator, &ssa_ir);
+    std.debug.print("\n\n------------------after optimized------------------\n\n", .{});
+    try opt.elimnate_phi.apply(&ssa_ir);
+    ssa.print(ssa_ir);
+    try codegen.generate(out, ssa_ir);
 }
 
 pub fn main() !void {
@@ -44,7 +50,7 @@ pub fn main() !void {
     const imm_buffer: [:0]const u8 = @ptrCast(buffer);
 
     const out_file = try std.fs.cwd().createFile(
-        "asm.S",
+        try std.fmt.allocPrint(allocator, "{s}.s", .{path[0 .. path.len - 3]}),
         .{ .read = true },
     );
     try compile(out_file.writer().any(), imm_buffer);

@@ -5,6 +5,7 @@ pub const construct = @import("./construct.zig");
 pub const Program = struct {
     functions: std.StringHashMap(FunctionContext),
     global_vars: std.StringHashMap(void),
+    const_strings: std.StringHashMap(void),
     main: FunctionContext,
 };
 
@@ -46,12 +47,11 @@ pub const DecisionBlock = struct {
 };
 
 pub const Instruction = union(enum) {
+    NoOp: void,
     Assignment: Assignment,
     Return: Value,
     /// Store to global var
     Store: StoreInstruction,
-    /// Write to global var array
-    WriteArr: ArrayWriteExpr,
     Print: Value,
 };
 
@@ -92,13 +92,14 @@ pub const FunctionCallExpr = struct {
 };
 
 pub const ArrayWriteExpr = struct {
-    array: Value,
+    root: []const u8,
+    array: Variable,
     idx: Value,
     value: Value,
 };
 
 pub const ArrayReadExpr = struct {
-    array: Value,
+    array: Variable,
     idx: Value,
 };
 
@@ -106,10 +107,102 @@ pub const BinOp = @import("../ast/ast.zig").BinOp;
 
 pub const PhiValues = struct {
     base: []const u8,
-    values: std.ArrayList(Value),
+    values: std.ArrayList(PhiValue),
 };
 
-pub const Const = union(enum) { int: i64, string: []const u8, boolean: bool, none };
+pub const PhiValue = struct {
+    value: Value,
+    block: u32,
+};
+
+pub const Const = union(enum) {
+    int: i64,
+    string: []const u8,
+    boolean: bool,
+    none,
+};
+
+pub fn equal(a: Const, b: Const) bool {
+    const compare = cmp(a, b) catch {
+        return false;
+    };
+    return compare == 0;
+}
+
+pub fn cmp(a: Const, b: Const) !i64 {
+    var a_num: ?i64 = null;
+    var b_num: ?i64 = null;
+    switch (a) {
+        .int => a_num = a.int,
+        .boolean => a_num = if (a.boolean) 1 else 0,
+        else => {},
+    }
+    switch (b) {
+        .int => b_num = b.int,
+        .boolean => b_num = if (b.boolean) 1 else 0,
+        else => {},
+    }
+    if (a_num != null and b_num != null) {
+        return a_num.? - b_num.?;
+    }
+
+    if (a == .string and b == .string) {
+        return strcmp(a.string, b.string);
+    }
+
+    return Error.NotSupported;
+}
+
+fn strcmp(a: []const u8, b: []const u8) i64 {
+    if (a.len != b.len) {
+        return if (a.len > b.len) 1 else -1;
+    }
+    for (a, b) |aChar, bChar| {
+        if (aChar != bChar) {
+            return if (aChar > bChar) 1 else -1;
+        }
+    }
+    return 0;
+}
+
+pub fn isBool(cnst: Const) bool {
+    switch (cnst) {
+        .boolean => |b| {
+            return b;
+        },
+        .int => |i| {
+            return i == 1;
+        },
+        .string => |s| {
+            return s.len != 0;
+        },
+        .none => {
+            return false;
+        },
+    }
+}
+
+pub fn not(cnst: Const) Const {
+    switch (cnst) {
+        .boolean => return Const{ .boolean = !cnst.boolean },
+        .int => return Const{ .boolean = cnst.int == 0 },
+        .string => return Const{ .boolean = cnst.string.len == 0 },
+        .none => return Const{ .boolean = true },
+    }
+}
+
+pub const Error = error{
+    NotSupported,
+};
+
+pub fn unary(cnst: Const) !Const {
+    switch (cnst) {
+        .int => return Const{ .int = -cnst.int },
+        .string => return Error.NotSupported,
+        .boolean => return Error.NotSupported,
+        .none => return Error.NotSupported,
+    }
+}
 
 pub fn print(program: Program) void {
     std.debug.print("Main: \n", .{});
@@ -158,15 +251,7 @@ fn printDecisionBlock(block: DecisionBlock) void {
 
 fn printInstruction(instruction: Instruction) void {
     switch (instruction) {
-        .WriteArr => |write_arr| {
-            std.debug.print("    ", .{});
-            printValue(write_arr.array);
-            std.debug.print("[", .{});
-            printValue(write_arr.idx);
-            std.debug.print("] = ", .{});
-            printValue(write_arr.value);
-            std.debug.print("\n", .{});
-        },
+        .NoOp => {},
         .Assignment => |assignment| {
             std.debug.print("    ", .{});
             printVariable(assignment.variable);
@@ -193,6 +278,11 @@ fn printInstruction(instruction: Instruction) void {
     }
 }
 
+fn printPhiValue(phi_value: PhiValue) void {
+    printValue(phi_value.value);
+    std.debug.print(" from {d}", .{phi_value.block});
+}
+
 fn printAssignValue(value: AssignValue) void {
     switch (value) {
         .BinOp => |binop| {
@@ -203,7 +293,7 @@ fn printAssignValue(value: AssignValue) void {
         .Phi => |phi| {
             std.debug.print("Phi(", .{});
             for (phi.values.items) |w| {
-                printValue(w);
+                printPhiValue(w);
                 std.debug.print(", ", .{});
             }
             std.debug.print(")", .{});
@@ -220,13 +310,13 @@ fn printAssignValue(value: AssignValue) void {
             std.debug.print("arg {d}", .{function_arg});
         },
         .ArrayRead => |array_read| {
-            printValue(array_read.array);
+            printVariable(array_read.array);
             std.debug.print("[", .{});
             printValue(array_read.idx);
             std.debug.print("]", .{});
         },
         .ArrayWrite => |array_write| {
-            printValue(array_write.array);
+            printVariable(array_write.array);
             std.debug.print("[", .{});
             printValue(array_write.idx);
             std.debug.print("] = ", .{});
@@ -248,6 +338,7 @@ fn printAssignValue(value: AssignValue) void {
             printValue(w);
         },
         .Unary => |w| {
+            std.debug.print("-", .{});
             printValue(w);
         },
         .Value => |w| {

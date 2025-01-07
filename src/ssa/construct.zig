@@ -12,10 +12,9 @@ const dom = @import("./dom_tree.zig");
 const VariableCounter = @import("./variable_counter.zig").VariableCounter;
 
 const HashSet = @import("../ds/set.zig").HashSet;
+const Queue = @import("../ds/queue.zig").Queue;
 
-const Error = error{
-    Todo,
-};
+const Error = error{ Todo, Unexpected };
 
 pub const AnnotatedCfg = struct {
     name: []const u8,
@@ -43,17 +42,18 @@ pub const AnnotatedNormalBlock = struct {
     inner: *CfgNormalBlock,
     used_vars: std.StringHashMap(void),
     assigned_vars: std.StringHashMap(void),
-    phis: std.StringHashMap(HashSet(u32)),
+    phis: std.StringHashMap(std.ArrayList(ssa.PhiValue)),
 };
 
 pub const AnnotatedDecisionBlock = struct {
     inner: *CfgDecisionBlock,
     used_vars: std.StringHashMap(void),
-    phis: std.StringHashMap(HashSet(u32)),
+    phis: std.StringHashMap(std.ArrayList(ssa.PhiValue)),
 };
 
 const AnnotatedContext = struct {
     global_vars: std.StringHashMap(void),
+    const_strings: std.StringHashMap(void),
     functions: std.StringHashMap(AnnotatedCfg),
     main: AnnotatedCfg,
 
@@ -91,6 +91,7 @@ pub const SSAConstructor = struct {
             try functions.put(entry.key_ptr.*, try self.buildCfg(entry.value_ptr));
         }
         return ssa.Program{
+            .const_strings = self.context.const_strings,
             .functions = functions,
             .global_vars = self.context.global_vars,
             .main = main_context,
@@ -105,44 +106,43 @@ pub const SSAConstructor = struct {
 
         const dom_tree = cfg.dom_tree;
         const dom_node = dom_tree.root;
-        var var_counter = VariableCounter.init(self.allocator);
+        var var_counter = VariableCounter.init(self.allocator, &self.context.global_vars);
         defer var_counter.deinit();
 
         try self.dfsBuildBlock(&cfg.args, &cfg.blocks, &ssa_context.blocks, dom_node, &var_counter);
-        try setPhiInstValues(&cfg.blocks, &ssa_context.blocks);
+        try setPhiValuesToInsts(&cfg.blocks, &ssa_context.blocks);
         return ssa_context;
     }
 
-    fn setPhiInstValues(ann_blocks: *const std.AutoHashMap(u32, *AnnotatedBlock), ssa_blocks: *const std.AutoHashMap(u32, *ssa.Block)) !void {
-        var it = ssa_blocks.valueIterator();
-        while (it.next()) |block_pp| {
-            switch (block_pp.*.*) {
-                ssa.BlockTag.Sequential => {
-                    const block = block_pp.*;
-                    const phis: std.StringHashMap(HashSet(u32)) = ann_blocks.get(block.*.Sequential.id).?.*.Sequential.phis;
-                    var insts: std.ArrayList(ssa.Instruction) = block.*.Sequential.instructions;
-                    for (0..insts.items.len) |i| {
-                        const inst = &insts.items[i];
-                        if (inst.* != .Assignment) {
-                            break;
-                        }
-                        if (inst.*.Assignment.rhs != .Phi) {
-                            break;
-                        }
-                        const phi_values = inst.*.Assignment.rhs.Phi;
-                        const phi_versions = phis.get(phi_values.base).?;
-                        var key_it = phi_versions.items.keyIterator();
-                        while (key_it.next()) |version| {
-                            try inst.*.Assignment.rhs.Phi.values.append(
-                                ssa.Value{ .Var = ssa.Variable{
-                                    .base = phi_values.base,
-                                    .version = version.*,
-                                } },
-                            );
-                        }
-                    }
+    fn setPhiValuesToInsts(anns: *const std.AutoHashMap(u32, *AnnotatedBlock), ssas: *std.AutoHashMap(u32, *ssa.Block)) !void {
+        var it = ssas.iterator();
+        while (it.next()) |entry| {
+            const block_id = entry.key_ptr.*;
+            const ann_block = anns.get(block_id).?;
+            var instructions: *std.ArrayList(ssa.Instruction) = undefined;
+            var phis: *std.StringHashMap(std.ArrayList(ssa.PhiValue)) = undefined;
+            switch (entry.value_ptr.*.*) {
+                .Decision => {
+                    phis = &ann_block.*.Decision.phis;
+                    instructions = &entry.value_ptr.*.*.Decision.instructions;
                 },
-                ssa.BlockTag.Decision => |_| {},
+                .Sequential => {
+                    phis = &ann_block.*.Sequential.phis;
+                    instructions = &entry.value_ptr.*.*.Sequential.instructions;
+                },
+            }
+            for (0..instructions.items.len) |i| {
+                const inst = instructions.items[i];
+                if (inst != .Assignment) {
+                    break;
+                }
+                if (inst.Assignment.rhs != .Phi) {
+                    break;
+                }
+
+                for (phis.get(inst.Assignment.variable.base).?.items) |phi| {
+                    try instructions.items[i].Assignment.rhs.Phi.values.append(phi);
+                }
             }
         }
     }
@@ -172,7 +172,11 @@ pub const SSAConstructor = struct {
                 }
             }
         }
-        const entry_block = try self.buildBlock(self.allocator, args, blocks, block.*, var_counter);
+
+        std.debug.print("building {s}\n", .{getBlockName(block)});
+
+        const entry_block = try self.buildBlock(self.allocator, args, block.*, var_counter);
+        try self.setSuccessorsPhiVals(blocks, dom_node.id, var_counter);
 
         try dest.put(dom_node.id, entry_block);
         for (dom_node.children.items) |child| {
@@ -182,6 +186,7 @@ pub const SSAConstructor = struct {
         if (need_pop) {
             //Pop the variables from the counter
             // Fix this , use recursive instead
+            //Might don't need fix(?)
             var var_it = var_on_entry.iterator();
             while (var_it.next()) |entry| {
                 const name = entry.key_ptr.*;
@@ -191,14 +196,26 @@ pub const SSAConstructor = struct {
         }
     }
 
-    fn setPhiValues(block: *AnnotatedBlock, counter: *const VariableCounter) !void {
+    fn getBlockName(block: *AnnotatedBlock) []const u8 {
+        switch (block.*) {
+            .Decision => return block.*.Decision.inner.*.name,
+            .Sequential => return block.*.Sequential.inner.*.name,
+        }
+    }
+    fn setPhiValues(block: *AnnotatedBlock, preccedor_id: u32, counter: *const VariableCounter) !void {
         switch (block.*) {
             .Decision => {
                 var it = block.*.Decision.phis.keyIterator();
                 while (it.next()) |phi| {
                     const latest = counter.getLatest(phi.*);
                     if (latest != null) {
-                        try block.*.Decision.phis.getPtr(phi.*).?.*.add(latest.?.version);
+                        std.debug.print("setting phi {s} in {s} from {d} with {any}\n", .{ phi.*, getBlockName(block), preccedor_id, latest });
+                        try block.*.Decision.phis.getPtr(phi.*).?.*.append(ssa.PhiValue{ .block = preccedor_id, .value = ssa.Value{
+                            .Var = ssa.Variable{
+                                .version = latest.?.version,
+                                .base = phi.*,
+                            },
+                        } });
                     }
                 }
             },
@@ -207,10 +224,64 @@ pub const SSAConstructor = struct {
                 while (it.next()) |phi| {
                     const latest = counter.getLatest(phi.*);
                     if (latest != null) {
-                        try block.*.Sequential.phis.getPtr(phi.*).?.*.add(latest.?.version);
+                        try block.*.Sequential.phis.getPtr(phi.*).?.*.append(ssa.PhiValue{ .block = preccedor_id, .value = ssa.Value{
+                            .Var = ssa.Variable{
+                                .version = latest.?.version,
+                                .base = phi.*,
+                            },
+                        } });
                     }
                 }
             },
+        }
+    }
+
+    fn getAnnotatedId(block: *AnnotatedBlock) u32 {
+        switch (block.*) {
+            .Decision => return block.*.Decision.inner.*.id,
+            .Sequential => return block.*.Sequential.inner.*.id,
+        }
+    }
+
+    fn setSuccessorsPhiVals(self: Self, blocks: *const std.AutoHashMap(u32, *AnnotatedBlock), start: u32, counter: *const VariableCounter) !void {
+        var walked = HashSet(u32).init(self.allocator);
+        var queue = Queue(u32).init(self.allocator);
+        defer walked.deinit();
+        defer queue.deinit();
+        try queue.enqueue(start);
+        std.debug.print("wstart\n", .{});
+        while (queue.dequeue()) |block_id| {
+            std.debug.print("www {d}\n", .{block_id});
+            if (walked.contains(block_id)) {
+                continue;
+            }
+            try walked.add(block_id);
+
+            const block = blocks.get(block_id).?;
+            std.debug.print("setting phi for{s}\n", .{getBlockName(block)});
+            try setPhiValues(block, start, counter);
+            switch (block.*) {
+                .Decision => |des| {
+                    const thenId = getBlockId(des.inner.then_block.?);
+                    const elseId = getBlockId(des.inner.else_block.?);
+                    if (!walked.contains(thenId)) {
+                        try queue.enqueue(thenId);
+                    }
+                    if (!walked.contains(elseId)) {
+                        try queue.enqueue(elseId);
+                    }
+                },
+                .Sequential => |seq| {
+                    const succ = seq.inner.successor;
+                    if (succ == null) {
+                        continue;
+                    }
+                    const succ_id = getBlockId(succ.?);
+                    if (!walked.contains(succ_id)) {
+                        try queue.enqueue(succ_id);
+                    }
+                },
+            }
         }
     }
 
@@ -218,7 +289,6 @@ pub const SSAConstructor = struct {
         self: Self,
         allocator: std.mem.Allocator,
         args: ?*const std.ArrayList([]const u8),
-        blocks: *const std.AutoHashMap(u32, *AnnotatedBlock),
         block: AnnotatedBlock,
         counter: *VariableCounter,
     ) !*ssa.Block {
@@ -226,8 +296,7 @@ pub const SSAConstructor = struct {
         switch (block) {
             .Decision => |decision| {
                 var instructions = std.ArrayList(ssa.Instruction).init(allocator);
-
-                try renamePhis(allocator, decision.phis, &instructions, counter);
+                try addPhiDeclares(allocator, decision.phis, &instructions, counter);
                 if (args != null) {
                     var i: u8 = 0;
                     for (args.?.items) |arg| {
@@ -247,19 +316,13 @@ pub const SSAConstructor = struct {
                     .instructions = instructions,
                     .predecessors = try getBlocksId(allocator, &block.Decision.inner.*.predecessors),
                 } };
-                const else_id = getBlockId(decision.inner.else_block.?);
-                const then_id = getBlockId(decision.inner.then_block.?);
-                const else_block = blocks.get(else_id).?;
-                const then_block = blocks.get(then_id).?;
-                try setPhiValues(else_block, counter);
-                try setPhiValues(then_block, counter);
 
                 return ssa_block;
             },
             .Sequential => |sequential| {
                 var instructions = std.ArrayList(ssa.Instruction).init(allocator);
 
-                try renamePhis(allocator, sequential.phis, &instructions, counter);
+                try addPhiDeclares(allocator, sequential.phis, &instructions, counter);
                 if (args != null) {
                     var i: u8 = 0;
                     for (args.?.items) |arg| {
@@ -296,9 +359,6 @@ pub const SSAConstructor = struct {
                     .successor = successor,
                 } };
 
-                const successor_block = blocks.get(successor).?;
-                try setPhiValues(successor_block, counter);
-
                 return ssa_block;
             },
         }
@@ -327,37 +387,7 @@ pub const SSAConstructor = struct {
                 }
             },
             .assign_list => |assign_list| {
-                const array_root = attemptFindArrayRoot(assign_list.lhs.*);
-                // If the array root is null, for example,
-                // [1, 2, 3][0] = 4
-                // Then we can ignore this statement
-                if (array_root == null) {
-                    return;
-                }
-                const is_global_var = self.context.global_vars.contains(array_root.?);
-                const idx = try self.handleExpr(assign_list.idx, dest, vars);
-                const array = try self.handleExpr(assign_list.lhs, dest, vars);
-                const value = try self.handleExpr(assign_list.rhs, dest, vars);
-
-                if (is_global_var) {
-                    const inst = ssa.Instruction{ .WriteArr = ssa.ArrayWriteExpr{
-                        .array = array,
-                        .idx = idx,
-                        .value = value,
-                    } };
-                    try dest.append(inst);
-                } else {
-                    const new_value = try vars.add(array_root.?);
-                    const inst = ssa.Instruction{ .Assignment = ssa.Assignment{
-                        .variable = new_value,
-                        .rhs = ssa.AssignValue{ .ArrayWrite = ssa.ArrayWriteExpr{
-                            .array = array,
-                            .idx = idx,
-                            .value = value,
-                        } },
-                    } };
-                    try dest.append(inst);
-                }
+                try self.handleListAssign(&assign_list, dest, vars);
             },
             .@"return" => |ret| {
                 const value = try self.handleExpr(ret, dest, vars);
@@ -380,14 +410,147 @@ pub const SSAConstructor = struct {
         }
     }
 
-    fn renamePhis(allocator: std.mem.Allocator, phis: std.StringHashMap(HashSet(u32)), dest: *std.ArrayList(ssa.Instruction), vars: *VariableCounter) !void {
+    /// a = [[3, 4]]
+    /// a[0][1] = 5
+    /// =>
+    /// tmp1 = [3,4]
+    /// a_1 = [tmp1]
+    ///
+    /// tmp2 = a[0]
+    /// tmp3 = (tmp2, 1, 5)
+    /// a_2 = (a_1, 0, tmp3)
+    fn handleListAssign(self: Self, list_write: *const ast.ListWrite, dest: *std.ArrayList(ssa.Instruction), vars: *VariableCounter) !void {
+        const array_root = attemptFindArrayRoot(list_write.lhs.*);
+        if (array_root == null) {
+            return;
+        }
+        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+
+        const allocator = gpa.allocator();
+        const ListAccess = struct {
+            idx: ssa.Value,
+            base: []const u8,
+        };
+
+        var access_lists = std.ArrayList(ListAccess).init(allocator);
+        defer access_lists.deinit();
+
+        const is_global_var = self.context.global_vars.contains(array_root.?);
+        var base: []const u8 = undefined;
+        var first_array: ssa.Variable = undefined;
+        if (is_global_var) {
+            base = "tmp";
+            first_array = try vars.add(base);
+            const load_inst = ssa.Instruction{ .Assignment = ssa.Assignment{
+                .variable = first_array,
+                .rhs = ssa.AssignValue{ .Load = array_root.? },
+            } };
+            try dest.append(load_inst);
+        } else {
+            base = array_root.?;
+            first_array = try vars.getLatestOrAdd(base);
+        }
+
+        try access_lists.append(ListAccess{
+            .idx = try self.handleExpr(list_write.*.idx, dest, vars),
+            .base = if (list_write.lhs.* == .ident) base else "tmp",
+        });
+
+        var expr: *const ast.Expr = list_write.lhs;
+        while (expr.* == .list_access) {
+            const idx = try self.handleExpr(expr.*.list_access.idx, dest, vars);
+
+            switch (expr.*.list_access.list.*) {
+                ast.ExprTag.list_access => {
+                    try access_lists.append(ListAccess{ .idx = idx, .base = "tmp" });
+                    expr = expr.*.list_access.list;
+                },
+                ast.ExprTag.ident => {
+                    try access_lists.append(ListAccess{ .idx = idx, .base = base });
+                    break;
+                },
+                else => {
+                    return Error.Unexpected;
+                },
+            }
+        }
+
+        for (0..access_lists.items.len) |i| {
+            const a = access_lists.items[i];
+            std.debug.print("a: {any}\n", .{a});
+        }
+
+        var array = first_array;
+        var new_vars = std.ArrayList(ssa.Variable).init(allocator);
+        for (0..access_lists.items.len - 1) |i| {
+            const ri = access_lists.items.len - i - 1;
+            const access = access_lists.items[ri];
+            const idx = access.idx;
+            const new_var = try vars.add("tmp");
+            const inst = ssa.Instruction{ .Assignment = ssa.Assignment{
+                .variable = new_var,
+                .rhs = ssa.AssignValue{ .ArrayRead = ssa.ArrayReadExpr{
+                    .array = array,
+                    .idx = idx,
+                } },
+            } };
+            try dest.append(inst);
+
+            try new_vars.append(array);
+            array = new_var;
+        }
+
+        const last_access = access_lists.items[0];
+        const idx = last_access.idx;
+        const new_value = try self.handleExpr(list_write.rhs, dest, vars);
+        const new_dest_t = try vars.add("tmp");
+        const inst = ssa.Instruction{ .Assignment = ssa.Assignment{
+            .rhs = ssa.AssignValue{ .ArrayWrite = ssa.ArrayWriteExpr{
+                .array = array,
+                .idx = idx,
+                .root = "",
+                .value = new_value,
+            } },
+            .variable = new_dest_t,
+        } };
+        try dest.append(inst);
+
+        var new_dest = new_dest_t;
+        const len = new_vars.items.len;
+        for (0..new_vars.items.len) |i| {
+            const a = new_vars.items[len - 1 - i];
+            const b = access_lists.items[i + 1];
+            const new_dest_tmp = try vars.add(a.base);
+            const inst1 = ssa.Instruction{ .Assignment = ssa.Assignment{
+                .variable = new_dest_tmp,
+                .rhs = ssa.AssignValue{ .ArrayWrite = ssa.ArrayWriteExpr{
+                    .array = a,
+                    .idx = b.idx,
+                    .root = "",
+                    .value = ssa.Value{ .Var = new_dest },
+                } },
+            } };
+            try dest.append(inst1);
+            new_dest = new_dest_tmp;
+            std.debug.print("a: {any}, b: {any} c: {any}\n", .{ a, b, new_dest });
+        }
+        if (is_global_var) {
+            const store_inst = ssa.Instruction{ .Store = ssa.StoreInstruction{
+                .name = array_root.?,
+                .value = ssa.Value{ .Var = new_dest },
+            } };
+            try dest.append(store_inst);
+        }
+    }
+
+    fn addPhiDeclares(allocator: std.mem.Allocator, phis: std.StringHashMap(std.ArrayList(ssa.PhiValue)), dest: *std.ArrayList(ssa.Instruction), vars: *VariableCounter) !void {
         var it = phis.keyIterator();
         while (it.next()) |phi| {
             const name = try vars.add(phi.*);
             const inst = ssa.Instruction{
                 .Assignment = ssa.Assignment{ .variable = name, .rhs = ssa.AssignValue{ .Phi = ssa.PhiValues{
                     .base = phi.*,
-                    .values = std.ArrayList(ssa.Value).init(allocator),
+                    .values = std.ArrayList(ssa.PhiValue).init(allocator),
                 } } },
             };
             try dest.append(inst);
@@ -442,10 +605,13 @@ pub const SSAConstructor = struct {
             },
             ast.ExprTag.list_access => {
                 const list = try self.handleExpr(expr.*.list_access.list, dest, vars);
+                if (list != .Var) {
+                    return Error.Unexpected;
+                }
                 const idx = try self.handleExpr(expr.*.list_access.idx, dest, vars);
                 const tmp = try vars.add("tmp");
                 const inst = ssa.Instruction{ .Assignment = ssa.Assignment{ .variable = tmp, .rhs = ssa.AssignValue{ .ArrayRead = ssa.ArrayReadExpr{
-                    .array = list,
+                    .array = list.Var,
                     .idx = idx,
                 } } } };
                 try dest.append(inst);
@@ -510,29 +676,32 @@ fn getBlocksId(allocator: std.mem.Allocator, blocks: *std.ArrayList(*CfgBlock)) 
 
 pub fn constructSSA(allocator: std.mem.Allocator, cfgIR: *const CfgIR) !ssa.Program {
     var global_vars = std.StringHashMap(void).init(allocator);
-    try identifyGlobalVars(cfgIR, &global_vars);
+    var const_strings = std.StringHashMap(void).init(allocator);
+    try identifyGlobalContext(cfgIR, &global_vars);
 
     var functions = std.StringHashMap(AnnotatedCfg).init(allocator);
     var it = cfgIR.functions.iterator();
     while (it.next()) |entry| {
         const args = try entry.value_ptr.*.args.clone();
-        try functions.put(entry.key_ptr.*, try annotateCfg(allocator, &global_vars, args, entry.value_ptr));
+        try functions.put(entry.key_ptr.*, try annotateCfg(allocator, &global_vars, &const_strings, args, entry.value_ptr));
     }
+    const main = try annotateCfg(allocator, &global_vars, &const_strings, std.ArrayList([]const u8).init(allocator), &cfgIR.main);
     const context = AnnotatedContext{
         .global_vars = global_vars,
+        .const_strings = const_strings,
         .functions = functions,
-        .main = try annotateCfg(allocator, &global_vars, std.ArrayList([]const u8).init(allocator), &cfgIR.main),
+        .main = main,
     };
     var constructor = SSAConstructor.init(allocator, context);
     return try constructor.buildSSA();
 }
 
-fn annotateCfg(allocator: std.mem.Allocator, global_vars: *std.StringHashMap(void), args: std.ArrayList([]const u8), cfg: *const cfgir.ControlFlowGraph) !AnnotatedCfg {
+fn annotateCfg(allocator: std.mem.Allocator, global_vars: *std.StringHashMap(void), const_strings: *std.StringHashMap(void), args: std.ArrayList([]const u8), cfg: *const cfgir.ControlFlowGraph) !AnnotatedCfg {
     var blocks = std.AutoHashMap(u32, *AnnotatedBlock).init(allocator);
     var it = cfg.blocks.valueIterator();
     while (it.next()) |item| {
         var used_vars = std.StringHashMap(void).init(allocator);
-        try identifyUsedVars(item.*, &used_vars);
+        try identifyUsedVars(item.*, &used_vars, const_strings);
         defer used_vars.deinit();
         switch (item.*.*) {
             cfgir.BlockTag.Decision => {
@@ -541,7 +710,7 @@ fn annotateCfg(allocator: std.mem.Allocator, global_vars: *std.StringHashMap(voi
                     .Decision = AnnotatedDecisionBlock{
                         .inner = &item.*.*.Decision,
                         .used_vars = try used_vars.clone(),
-                        .phis = std.StringHashMap(HashSet(u32)).init(allocator),
+                        .phis = std.StringHashMap(std.ArrayList(ssa.PhiValue)).init(allocator),
                     },
                 };
                 try blocks.put(item.*.*.Decision.id, block);
@@ -556,7 +725,7 @@ fn annotateCfg(allocator: std.mem.Allocator, global_vars: *std.StringHashMap(voi
                         .inner = &item.*.*.Sequential,
                         .used_vars = try used_vars.clone(),
                         .assigned_vars = try assigned_vars.clone(),
-                        .phis = std.StringHashMap(HashSet(u32)).init(allocator),
+                        .phis = std.StringHashMap(std.ArrayList(ssa.PhiValue)).init(allocator),
                     },
                 };
                 try blocks.put(item.*.*.Sequential.id, block);
@@ -585,7 +754,7 @@ fn insertPhis(global_var: *std.StringHashMap(void), cfg: *AnnotatedCfg) !void {
                     if (global_var.contains(used_var.*)) {
                         continue;
                     }
-                    const phi_values = HashSet(u32).init(block.*.*.Decision.phis.allocator);
+                    const phi_values = std.ArrayList(ssa.PhiValue).init(block.*.*.Decision.phis.allocator);
                     try block.*.*.Decision.phis.put(used_var.*, phi_values);
                 }
             },
@@ -595,7 +764,7 @@ fn insertPhis(global_var: *std.StringHashMap(void), cfg: *AnnotatedCfg) !void {
                     if (global_var.contains(used_var.*)) {
                         continue;
                     }
-                    const phi_values = HashSet(u32).init(block.*.*.Sequential.phis.allocator);
+                    const phi_values = std.ArrayList(ssa.PhiValue).init(block.*.*.Sequential.phis.allocator);
                     try block.*.*.Sequential.phis.put(used_var.*, phi_values);
                 }
             },
@@ -603,37 +772,37 @@ fn insertPhis(global_var: *std.StringHashMap(void), cfg: *AnnotatedCfg) !void {
     }
 }
 
-fn identifyGlobalVars(cfg: *const CfgIR, global_vars: *std.StringHashMap(void)) !void {
+fn identifyGlobalContext(cfg: *const CfgIR, global_vars: *std.StringHashMap(void)) !void {
     var it = cfg.main.blocks.valueIterator();
     while (it.next()) |block| {
         try identifyAssignedVars(block.*, global_vars);
     }
 }
 
-fn identifyUsedVars(block: *CfgBlock, used_vars: *std.StringHashMap(void)) !void {
+fn identifyUsedVars(block: *CfgBlock, used_vars: *std.StringHashMap(void), const_strings: *std.StringHashMap(void)) !void {
     switch (block.*) {
         cfgir.BlockTag.Decision => {
-            try identifyExprUsedVars(&block.*.Decision.condition, used_vars);
+            try identifyExprUsedVars(&block.*.Decision.condition, used_vars, const_strings);
         },
         cfgir.BlockTag.Sequential => {
             for (block.*.Sequential.statements.items) |stmt| {
                 switch (stmt) {
                     .assign => {
-                        try identifyExprUsedVars(stmt.assign.rhs, used_vars);
+                        try identifyExprUsedVars(stmt.assign.rhs, used_vars, const_strings);
                     },
                     .assign_list => {
-                        try identifyExprUsedVars(stmt.assign_list.idx, used_vars);
-                        try identifyExprUsedVars(stmt.assign_list.lhs, used_vars);
-                        try identifyExprUsedVars(stmt.assign_list.rhs, used_vars);
+                        try identifyExprUsedVars(stmt.assign_list.idx, used_vars, const_strings);
+                        try identifyExprUsedVars(stmt.assign_list.lhs, used_vars, const_strings);
+                        try identifyExprUsedVars(stmt.assign_list.rhs, used_vars, const_strings);
                     },
                     .@"return" => {
-                        try identifyExprUsedVars(stmt.@"return", used_vars);
+                        try identifyExprUsedVars(stmt.@"return", used_vars, const_strings);
                     },
                     .expr => {
-                        try identifyExprUsedVars(stmt.expr, used_vars);
+                        try identifyExprUsedVars(stmt.expr, used_vars, const_strings);
                     },
                     .print => {
-                        try identifyExprUsedVars(stmt.print.value, used_vars);
+                        try identifyExprUsedVars(stmt.print.value, used_vars, const_strings);
                     },
                 }
             }
@@ -641,36 +810,44 @@ fn identifyUsedVars(block: *CfgBlock, used_vars: *std.StringHashMap(void)) !void
     }
 }
 
-fn identifyExprUsedVars(expr: *ast.Expr, used_vars: *std.StringHashMap(void)) !void {
+fn identifyExprUsedVars(expr: *ast.Expr, used_vars: *std.StringHashMap(void), const_strings: *std.StringHashMap(void)) !void {
     switch (expr.*) {
         ast.ExprTag.ident => {
             try used_vars.put(expr.*.ident, void{});
         },
         ast.ExprTag.bin_op => {
-            try identifyExprUsedVars(expr.*.bin_op.lhs, used_vars);
-            try identifyExprUsedVars(expr.*.bin_op.rhs, used_vars);
+            try identifyExprUsedVars(expr.*.bin_op.lhs, used_vars, const_strings);
+            try identifyExprUsedVars(expr.*.bin_op.rhs, used_vars, const_strings);
         },
         ast.ExprTag.function_call => {
             for (expr.*.function_call.args.items) |arg| {
-                try identifyExprUsedVars(arg, used_vars);
+                try identifyExprUsedVars(arg, used_vars, const_strings);
             }
         },
         ast.ExprTag.list_access => {
-            try identifyExprUsedVars(expr.*.list_access.list, used_vars);
-            try identifyExprUsedVars(expr.*.list_access.idx, used_vars);
+            try identifyExprUsedVars(expr.*.list_access.list, used_vars, const_strings);
+            try identifyExprUsedVars(expr.*.list_access.idx, used_vars, const_strings);
         },
         ast.ExprTag.list_declare => {
             for (expr.*.list_declare.values.items) |value| {
-                try identifyExprUsedVars(value, used_vars);
+                try identifyExprUsedVars(value, used_vars, const_strings);
             }
         },
         ast.ExprTag.not_expr => {
-            try identifyExprUsedVars(expr.*.not_expr, used_vars);
+            try identifyExprUsedVars(expr.*.not_expr, used_vars, const_strings);
         },
         ast.ExprTag.unary_expr => {
-            try identifyExprUsedVars(expr.*.unary_expr, used_vars);
+            try identifyExprUsedVars(expr.*.unary_expr, used_vars, const_strings);
         },
-        ast.ExprTag.@"const" => {},
+        ast.ExprTag.@"const" => {
+            switch (expr.*.@"const") {
+                .string => {
+                    try const_strings.put(expr.*.@"const".string, void{});
+                    std.debug.print("const string: {s}\n", .{expr.*.@"const".string});
+                },
+                else => {},
+            }
+        },
     }
 }
 

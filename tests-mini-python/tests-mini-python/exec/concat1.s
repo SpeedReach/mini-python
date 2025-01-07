@@ -3,9 +3,9 @@
     true: .string "True"
     false: .string "False"
     integer: .string "%d"
-    panic_str: .string "error\n"
-.bss
-    a: .zero 8
+    newline: .string "\n"
+    panic_str: .string "error\n\0"
+.section .note.GNU-stack,"",@progbits
 .text
 
 .macro malloc size
@@ -30,6 +30,149 @@ my_malloc:
     call print_next_line
 .endm
 
+__list:
+  pushq   %rbp
+  movq    %rsp, %rbp
+  movq    %rbp, %rsp
+  popq    %rbp
+  ret
+__range:
+  pushq   %rbp
+  movq    %rsp, %rbp
+  movq    16(%rbp), %rbx
+  movq    (%rbx), %rax
+  cmpq    $2, %rax
+  jne runtime_panic
+  movq    8(%rbx), %rax
+  pushq   %rax #n
+  pushq   $0   #i
+  addq    $16, %rax
+  imulq $8, %rax 
+  malloc  %rax
+  movq    $4, (%rax)
+  movq    8(%rbx), %rcx
+  movq    %rcx, 8(%rax)
+  addq    $16, %rax
+  pushq   %rax #ptr
+range_loop:
+  movq    8(%rsp), %rax  #i
+  movq    16(%rsp), %rbx #n
+  cmpq    %rbx, %rax
+  jge range_end
+  malloc  $16
+  movq    $2, (%rax)
+  movq    8(%rsp), %rcx
+  movq    %rcx, 8(%rax)
+
+  imulq   $8, %rcx
+  movq    (%rsp), %rdx
+  addq    %rcx, %rdx
+  movq    %rax, (%rdx)
+  movq    8(%rsp), %rcx
+  addq    $1, %rcx
+  movq    %rcx, 8(%rsp)
+  jmp range_loop
+
+range_end:
+  movq    (%rsp), %rax
+  subq    $16, %rax
+  addq    $24, %rsp
+  movq    %rbp, %rsp
+  popq    %rbp
+  ret
+
+
+
+__len:
+  pushq   %rbp
+  movq    %rsp, %rbp
+  movq    16(%rbp), %rbx
+  movq    (%rbx), %rax
+  cmpq    $4, %rax
+  je  len_list
+  cmpq    $3, %rax
+  je  len_str
+  jmp runtime_panic
+
+len_str:
+len_list:
+  malloc  $16
+  movq    $2, (%rax)
+  movq    8(%rbx), %rbx
+  movq    %rbx, 8(%rax)
+  movq    %rbp, %rsp
+  popq    %rbp
+  ret  
+
+
+not:
+  pushq   %rbp
+  movq    %rsp, %rbp
+  movq    16(%rbp), %rbx
+  pushq   %rbx
+  call    is_bool
+  addq    $8, %rsp
+  cmpq    $0, %rax
+  je  not_return_true
+  jmp not_return_false
+not_return_true:
+  malloc  $16
+  movq    $1, (%rax)
+  movq    $1, 8(%rax)
+  jmp not_end
+not_return_false:
+  malloc  $16
+  movq    $1, (%rax)
+  movq    $0, 8(%rax)
+not_end:
+  movq    %rbp, %rsp
+  popq    %rbp
+  ret
+
+is_bool:
+  pushq   %rbp
+  movq    %rsp, %rbp
+  movq    16(%rbp), %rbx
+  movq    (%rbx), %rax
+  cmpq    $0, %rax
+  je  is_bool_false
+  cmpq    $1, %rax
+  je  is_bool_bool
+  cmpq    $2, %rax
+  je  is_bool_int
+  cmpq    $3, %rax
+  je  is_bool_str
+  cmpq    $4, %rax
+  je  is_bool_list
+  jmp runtime_panic
+is_bool_bool:
+  movq    8(%rbx), %rax
+  jmp  is_bool_end
+is_bool_int:
+  movq    8(%rbx), %rax
+  cmpq    $0, %rax
+  je  is_bool_false
+  je  is_bool_true
+is_bool_str:
+  movq    8(%rbx), %rax
+  cmpq    $0, %rax
+  je  is_bool_false
+  je  is_bool_true
+is_bool_list:
+  movq    8(%rbx), %rax
+  cmpq    $0, %rax
+  je  is_bool_false
+  je  is_bool_true
+is_bool_true:
+  movq    $1, %rax
+  jmp  is_bool_end
+is_bool_false:
+  movq    $0, %rax
+is_bool_end:
+  movq    %rbp, %rsp
+  popq    %rbp
+  ret
+
 simple_print:
     pushq   %rbp
     movq    %rsp, %rbp
@@ -51,6 +194,7 @@ simple_print:
     je  call_print_str
     cmpq    $4, %rcx
     je  call_print_list
+    jmp runtime_panic
 simple_print_end:
     movq    %rbp, %rsp
     popq    %rbp
@@ -151,7 +295,7 @@ print_string_for_cond:
 print_string_for_inner:
     movq    -16(%rbp), %rbx         # Set rbx to the pointer to the start of the string
     movq    -24(%rbp), %rcx         # Set rcx to i
-    imulq   $8, %rcx                # Since every char is 8 bytes in mini-python, we have to * 8
+    #imulq   $8, %rcx                # Since every char is 8 bytes in mini-python, we have to * 8
     addq    %rbx, %rcx              # Get pointer to str[i]
     movq    (%rcx), %rcx            # Move the char at str[i] to rcx 
                                 #
@@ -181,11 +325,32 @@ my_putchar:
     popq    %rbp
     ret
 
+my_strcmp:
+    pushq   %rbp
+    movq    %rsp, %rbp
+    movq    16(%rbp), %rdi
+    movq    24(%rbp), %rsi
+    andq    $-16, %rsp
+    call    strcmp
+    movq    %rbp, %rsp
+    popq    %rbp
+    ret
+
+my_strcpy:
+    pushq   %rbp
+    movq    %rsp, %rbp
+    movq    16(%rbp), %rdi
+    movq    24(%rbp), %rsi
+    andq    $-16, %rsp
+    call    strcpy
+    movq    %rbp, %rsp
+    popq    %rbp
+    ret
+
 print_next_line:
-    subq    $8, %rsp
-    movq    $10, (%rsp)
-    call    my_putchar
-    addq    $8, %rsp
+    leaq    newline(%rip), %rdi     # Load address of format string into %rdi
+    xorq    %rax, %rax              # Set %rax to 0 as required for variadic functions
+    call    printf                  # Call the `printf` function
     ret
 
 print_list:
@@ -257,8 +422,67 @@ runtime_panic:
 
     call printf             # Call the `printf` function
     movq    $60, %rax                     # System call number for `exit`
-    xorq    %rdi, %rdi                    # Status 0 (successful exit)
+    #xorq    %rdi, %rdi                    # Status 0 (successful exit)
+    movq    $1, %rdi
     syscall                           # Make the system call
+
+_builtin_cmp:
+    pushq   %rbp
+    movq    %rsp, %rbp
+    movq    (%rdi), %r8
+    movq    (%rsi), %r9
+    cmpq    $0, %r8
+    je  _cmp_none
+    cmpq    $1, %r8
+    je  _cmp_int
+    cmpq    $2, %r8
+    je  _cmp_int
+    cmpq    $3, %r8
+    je  _cmp_str
+_cmp_none:
+    cmpq  $0, %r9
+    je  _cmp_equal
+    jmp runtime_panic
+
+_cmp_int:
+    movq    8(%rdi),   %r8
+    cmpq    $1,   %r9
+    je  _cmp_int_2
+    cmpq    $2,   %r9
+    je  _cmp_int_2
+    jmp runtime_panic
+_cmp_int_2:
+    movq    8(%rsi),   %r9
+    cmpq    %r9, %r8
+    je  _cmp_equal
+    jl  _cmp_smaller
+    jmp _cmp_larger
+_cmp_str:
+    cmpq    $3, %r9
+    jne   runtime_panic
+    addq    $16, %rdi
+    addq    $16, %rsi
+    pushq   %rdi
+    pushq   %rsi
+    call    my_strcmp
+    addq  $16, %rsp
+    jmp _cmp_end
+
+_cmp_list:
+_cmp_larger:
+    movq    $1, %rax
+    jmp _cmp_end
+_cmp_smaller:
+    movq    $-1, %rax
+    jmp _cmp_end
+_cmp_equal:
+    movq    $0, %rax
+    jmp _cmp_end
+_cmp_end:
+    movq    %rbp, %rsp
+    popq    %rbp
+    ret
+
 
 _builtin_add:
     pushq   %rbp
@@ -296,147 +520,69 @@ add_int:
     ret
 .globl main
 add_str:
+    pushq   %rdi
+    pushq   %rsi
+    movq    8(%rdi), %r8  # r8 = len(str1)
+    movq    8(%rsi), %r9  # r9 = len(str2)
+
+    addq  $16, %r8        # We have to malloc 16 + len(str1) + len(str2) + 1
+    addq  %r9, %r8
+    pushq   %r8
+    malloc  %r8
+    movq    $3, (%rax)    # Set type to string
+    popq    %r8
+    subq    $16, %r8
+    movq    %r8, 8(%rax)  # Set len(after concat)
+
+    movq    -8(%rbp), %rdi
+    movq    %rdi, %r8     # Set r8 = str1
+    addq    $16, %r8       # Set r8 = ptr(str1 start)
+    pushq   %r8           
+
+    addq    $16, %rax     # Set (rax + 16) to the destination of strcpy
+    pushq   %rax
+
+    call  my_strcpy
+
+    movq    -8(%rbp), %rdi
+    movq    8(%rdi), %rbx # Set rbx = len(str1)
+    movq    (%rsp),    %rax          
+    addq    %rbx, %rax
+
+    movq    -16(%rbp), %rsi
+    addq    $16, %rsi
+    pushq   %rsi
+
+    pushq %rax
+    call  my_strcpy
+    movq  16(%rsp),  %rax
+    subq    $16, %rax 
+    movq    %rbp, %rsp
+    popq    %rbp
+    ret
+    
 add_list:
 main:
     pushq  %rbp
     movq    %rsp, %rbp
-    subq    $80, %rsp
+    subq    $0, %rsp
 main_0_entry:
-
-    malloc  $24            
-    movq    %rax, -48(%rbp)
-    pushq   %rax           
-    movq    $4,     (%rax)
-    movq    $1,   8(%rax)
-    malloc  $16
-    movq    $2, (%rax)
-    movq    $3, 8(%rax)
-    movq    (%rsp), %rbx
-    movq    %rax,   16(%rbx)
-    popq    %rax
-
-
-    malloc  $24            
-    movq    %rax, -8(%rbp)
-    pushq   %rax           
-    movq    $4,     (%rax)
-    movq    $1,   8(%rax)
-    movq    -48(%rbp),  %rax 
-    movq    (%rsp), %rbx
-    movq    %rax,   16(%rbx)
-    popq    %rax
-
-
-    malloc  $24            
-    movq    %rax, -24(%rbp)
-    pushq   %rax           
-    movq    $4,     (%rax)
-    movq    $1,   8(%rax)
-    movq    -8(%rbp),  %rax 
-    movq    (%rsp), %rbx
-    movq    %rax,   16(%rbx)
-    popq    %rax
-
-    movq    -24(%rbp), %rax
-    movq    %rax, (a)
-    movq    (a), %rax
-    movq    %rax, -64(%rbp)
-    movq    -64(%rbp),  %rax
-    pushq   %rax
-    movq    (%rax), %rax
-    cmpq    $4, %rax
-    jne     runtime_panic
-    movq    $0, %rbx
-    popq    %rax
-    movq    8(%rax), %rcx
-    cmpq    %rcx, %rbx
-    jge     runtime_panic
-    imul    $8, %rbx
-    addq    %rbx, %rax
-    movq   16(%rax), %rax
-    movq    %rax, -32(%rbp)
-    movq    -32(%rbp),  %rax
-    pushq   %rax
-    movq    (%rax), %rax
-    cmpq    $4, %rax
-    jne     runtime_panic
-    movq    $0, %rbx
-    popq    %rax
-    movq    8(%rax), %rcx
-    cmpq    %rcx, %rbx
-    jge     runtime_panic
-    imul    $8, %rbx
-    addq    %rbx, %rax
-    movq   16(%rax), %rax
-    movq    %rax, -56(%rbp)
-    movq    -56(%rbp),  %rax
-    pushq   %rax
-    movq    (%rax), %rax
-    cmpq    $4, %rax
-    jne     runtime_panic
-    movq    $0, %rbx
-    popq    %rax
-    movq    8(%rax), %rcx
-    cmpq    %rcx, %rbx
-    jge     runtime_panic
-    imul    $8, %rbx
-    addq    %rbx, %rax
-    addq    $16, %rax
-    pushq   %rax
-    malloc  $16
-    movq    $2, (%rax)
+    malloc  $22
+    movq    $3, (%rax)
     movq    $6, 8(%rax)
-    popq   %rbx
-    movq    %rax, (%rbx)
-    movq    -56(%rbp),  %rax
-    movq    %rax, -40(%rbp)
-    movq    -32(%rbp),  %rax
-    pushq   %rax
-    movq    (%rax), %rax
-    cmpq    $4, %rax
-    jne     runtime_panic
-    movq    $0, %rbx
-    popq    %rax
-    movq    8(%rax), %rcx
-    cmpq    %rcx, %rbx
-    jge     runtime_panic
-    imul    $8, %rbx
-    addq    %rbx, %rax
-    addq    $16, %rax
-    pushq   %rax
-    movq    -40(%rbp), %rax
-    popq   %rbx
-    movq    %rax, (%rbx)
-    movq    -32(%rbp),  %rax
-    movq    %rax, -72(%rbp)
-    movq    -64(%rbp),  %rax
-    pushq   %rax
-    movq    (%rax), %rax
-    cmpq    $4, %rax
-    jne     runtime_panic
-    movq    $0, %rbx
-    popq    %rax
-    movq    8(%rax), %rcx
-    cmpq    %rcx, %rbx
-    jge     runtime_panic
-    imul    $8, %rbx
-    addq    %rbx, %rax
-    addq    $16, %rax
-    pushq   %rax
-    movq    -72(%rbp), %rax
-    popq   %rbx
-    movq    %rax, (%rbx)
-    movq    -64(%rbp),  %rax
-    movq    %rax, -80(%rbp)
-    movq    -80(%rbp), %rax
-    movq    %rax, (a)
-    movq    (a), %rax
-    movq    %rax, -16(%rbp)
-    movq    -16(%rbp), %rax
+    movb    $102, 16(%rax)
+    movb    $111, 17(%rax)
+    movb    $111, 18(%rax)
+    movb    $98, 19(%rax)
+    movb    $97, 20(%rax)
+    movb    $114, 21(%rax)
     pushq   %rax
     print
     jmp main_end
 main_end:
+    andq   $-16, %rsp
+    movq   (stdout), %rdi
+    call   fflush
     movq    $60, %rax
     xorq    %rdi, %rdi
     syscall

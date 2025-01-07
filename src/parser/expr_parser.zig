@@ -91,7 +91,7 @@ pub const ExprParser = struct {
     fn parse_expr_list(self: *ExprParser) !std.ArrayList(*ast.Expr) {
         var args = std.ArrayList(*ast.Expr).init(self.allocator);
         const first = try self.lexer.peek();
-        if (first == .raw and first.raw.tag == RawTokenTag.r_paren) {
+        if (first == .raw and (first.raw.tag == RawTokenTag.r_bracket or first.raw.tag == RawTokenTag.r_paren)) {
             return args;
         }
         while (true) {
@@ -169,7 +169,7 @@ fn token2BinOp(token: RawTokenTag) ast.BinOp {
         RawTokenTag.sub => return ast.BinOp.sub,
         RawTokenTag.mul => return ast.BinOp.mul,
         RawTokenTag.div => return ast.BinOp.div,
-        RawTokenTag.percent => return ast.BinOp.div,
+        RawTokenTag.percent => return ast.BinOp.mod,
         RawTokenTag.equal_equal => return ast.BinOp.eq,
         RawTokenTag.ne => return ast.BinOp.ne,
         RawTokenTag.lt => return ast.BinOp.lt,
