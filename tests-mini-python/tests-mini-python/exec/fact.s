@@ -374,6 +374,10 @@ print_list:
 print_list_for_init:
     movq    $0, (%rsp)              # Initialize i=0, and store it on -24(%rbp)
 print_list_for_inner:
+    movq    -8(%rbp), %rbx          # Check if we are at the end of the list
+    movq    -24(%rbp), %rcx         # Set rcx to i
+    cmpq    %rbx, %rcx 
+    jge print_list_for_end
     movq    -16(%rbp), %rbx         # Set rbx to the pointer to the start of the string
     movq    -24(%rbp), %rcx         # Set rcx to i
     imulq   $8, %rcx                # Since every char is 8 bytes in mini-python, we have to * 8
@@ -422,8 +426,8 @@ runtime_panic:
 
     call printf             # Call the `printf` function
     movq    $60, %rax                     # System call number for `exit`
-    #xorq    %rdi, %rdi                    # Status 0 (successful exit)
-    movq    $1, %rdi
+    #xorq    %rdi, %rdi                    
+    movq    $1, %rdi              # Status 1 (error exit)
     syscall                           # Make the system call
 
 _builtin_cmp:
@@ -620,10 +624,10 @@ __fact_1_ifCondBlock:
     je      branch_0
     jmp branch_1
 branch_0:
-    movq    $1, %rax
+    movq    $0, %rax
     jmp     branch_2
 branch_1:
-    movq    $0, %rax
+    movq    $1, %rax
     jmp     branch_2
 branch_2:
     pushq  %rax
@@ -802,17 +806,14 @@ __factimp_2forBody:
     movq    %rax, -8(%rbp)
     movq    -8(%rbp),  %rax     
     movq    %rax,       -184(%rbp)
-    movq    -184(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $1,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
+    movq    -184(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -40(%rbp)
     movq    -40(%rbp), %rax
     movq    (%rax), %rcx
@@ -835,17 +836,14 @@ __factimp_2forBody:
     movq    %rax,       -120(%rbp)
     movq    -120(%rbp),  %rax     
     movq    %rax,       -56(%rbp)
-    movq    -176(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $1,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
+    movq    -176(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -72(%rbp)
     movq    -72(%rbp),  %rax     
     movq    %rax,       -32(%rbp)

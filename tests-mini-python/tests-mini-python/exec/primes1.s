@@ -374,6 +374,10 @@ print_list:
 print_list_for_init:
     movq    $0, (%rsp)              # Initialize i=0, and store it on -24(%rbp)
 print_list_for_inner:
+    movq    -8(%rbp), %rbx          # Check if we are at the end of the list
+    movq    -24(%rbp), %rcx         # Set rcx to i
+    cmpq    %rbx, %rcx 
+    jge print_list_for_end
     movq    -16(%rbp), %rbx         # Set rbx to the pointer to the start of the string
     movq    -24(%rbp), %rcx         # Set rcx to i
     imulq   $8, %rcx                # Since every char is 8 bytes in mini-python, we have to * 8
@@ -422,8 +426,8 @@ runtime_panic:
 
     call printf             # Call the `printf` function
     movq    $60, %rax                     # System call number for `exit`
-    #xorq    %rdi, %rdi                    # Status 0 (successful exit)
-    movq    $1, %rdi
+    #xorq    %rdi, %rdi                    
+    movq    $1, %rdi              # Status 1 (error exit)
     syscall                           # Make the system call
 
 _builtin_cmp:
@@ -683,17 +687,14 @@ __filter_out_2forBody:
     movq    %rax, -56(%rbp)
     movq    -56(%rbp),  %rax     
     movq    %rax,       -40(%rbp)
-    movq    -24(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $1,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
+    movq    -24(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -224(%rbp)
     movq    -224(%rbp),  %rax     
     movq    %rax,       -112(%rbp)
@@ -855,17 +856,14 @@ __filter_out_4_ifBody:
     movq    %rax,       -136(%rbp)
     jmp __filter_out_5ifExit
 __filter_out_5ifExit:
-    movq    -144(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $1,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
+    movq    -144(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -160(%rbp)
     movq    -160(%rbp),  %rax     
     movq    %rax,       -32(%rbp)
@@ -928,17 +926,14 @@ __range2_0_entry:
     movq    $2,     (%rax)
     movq    %r9,    8(%rax)
     movq    %rax,       -88(%rbp)
-    movq    -88(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $1,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
+    movq    -88(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -56(%rbp)
     movq    -56(%rbp),  %rax
     pushq   %rax
@@ -1066,45 +1061,36 @@ __range2_2forBody:
     movq    %rax, (%rbx)
     movq    -120(%rbp),  %rax
     movq    %rax, -192(%rbp)
-    movq    -16(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $1,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
+    movq    -16(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -200(%rbp)
     movq    -200(%rbp),  %rax     
     movq    %rax,       -80(%rbp)
-    movq    -176(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $1,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
+    movq    -176(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -208(%rbp)
     movq    -208(%rbp),  %rax     
     movq    %rax,       -32(%rbp)
-    movq    -40(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $1,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
+    movq    -40(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -184(%rbp)
     movq    -184(%rbp),  %rax     
     movq    %rax,       -112(%rbp)
@@ -1144,11 +1130,11 @@ __primes:
 __primes_0_entry:
     movq    16(%rbp),  %rax
     movq    %rax,       -72(%rbp)
+    movq    -72(%rbp),  %rax
+    pushq   %rax
     malloc  $16
     movq    $2, (%rax)
     movq    $2, 8(%rax)
-    pushq   %rax
-    movq    -72(%rbp),  %rax
     pushq   %rax
     call    __range2
     addq    $16, %rsp
@@ -1246,17 +1232,14 @@ __primes_2forBody:
     movq    %rax, -248(%rbp)
     movq    -248(%rbp),  %rax     
     movq    %rax,       -16(%rbp)
-    movq    -192(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $1,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
+    movq    -192(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -120(%rbp)
     movq    -120(%rbp),  %rax     
     movq    %rax,       -48(%rbp)
@@ -1338,23 +1321,20 @@ __primes_4_ifBody:
     movq    %rax, (%rbx)
     movq    -144(%rbp),  %rax
     movq    %rax, -216(%rbp)
-    movq    -104(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $1,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
+    movq    -104(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -184(%rbp)
     movq    -184(%rbp),  %rax     
     movq    %rax,       -8(%rbp)
-    movq    -160(%rbp),  %rax
-    pushq   %rax
     movq    -144(%rbp),  %rax
+    pushq   %rax
+    movq    -160(%rbp),  %rax
     pushq   %rax
     call    __filter_out
     addq    $16, %rsp
@@ -1409,9 +1389,9 @@ __primes_5ifExit:
     movq    %rax,       -24(%rbp)
     jmp __primes_1_forCondBlock
 __primes_forexit_6:
-    movq    -240(%rbp),  %rax
-    pushq   %rax
     movq    -24(%rbp),  %rax
+    pushq   %rax
+    movq    -240(%rbp),  %rax
     pushq   %rax
     call    __prefix
     addq    $16, %rsp
@@ -1576,17 +1556,14 @@ __prefix_2forBody:
     movq    %rax, (%rbx)
     movq    -128(%rbp),  %rax
     movq    %rax, -192(%rbp)
-    movq    -24(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $1,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
+    movq    -24(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -176(%rbp)
     movq    -176(%rbp),  %rax     
     movq    %rax,       -64(%rbp)

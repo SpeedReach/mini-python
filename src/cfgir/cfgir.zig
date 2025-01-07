@@ -31,6 +31,8 @@ pub const CFGConstructor = struct {
     end_block: *Block,
     built: bool,
     args: std.ArrayList(Ident),
+    /// We might create variables when unwraping for statements, we need to keep track of them for downstream analysis
+    created_vars: std.StringHashMap(void),
 
     fn init(allocator: std.mem.Allocator, prefix: []const u8, args: std.ArrayList(Ident)) !CFGConstructor {
         const block = try allocator.create(Block);
@@ -40,7 +42,18 @@ pub const CFGConstructor = struct {
         end.* = Block{ .Sequential = NormalBlock.init(allocator, std.math.maxInt(u32), try std.fmt.allocPrint(allocator, "{s}_end", .{prefix})) };
         try blocks.put(0, block);
         try blocks.put(std.math.maxInt(u32), end);
-        return CFGConstructor{ .allocator = allocator, .block_idx = 1, .prefix = prefix, .current_block = block, .end_block = end, .blocks = blocks, .scope_control_stack = std.ArrayList(*Block).init(allocator), .built = false, .args = args };
+        return CFGConstructor{
+            .allocator = allocator,
+            .block_idx = 1,
+            .prefix = prefix,
+            .current_block = block,
+            .end_block = end,
+            .blocks = blocks,
+            .scope_control_stack = std.ArrayList(*Block).init(allocator),
+            .built = false,
+            .args = args,
+            .created_vars = std.StringHashMap(void).init(allocator),
+        };
     }
 
     pub fn deinit(self: *CFGConstructor) void {
@@ -54,6 +67,7 @@ pub const CFGConstructor = struct {
         }
         self.blocks.deinit();
         self.args.deinit();
+        self.created_vars.deinit();
     }
 
     /// Build the ControlFlowGraph from the constructed blocks
@@ -78,6 +92,7 @@ pub const CFGConstructor = struct {
             .blocks = self.blocks,
             .entry = self.blocks.get(0).?,
             .exit = self.end_block,
+            .created_vars = self.created_vars,
         };
         return cfg;
     }
@@ -258,6 +273,7 @@ pub const CFGConstructor = struct {
 
         // At the start of the forBody, we need to assign the item of the iterable to the loop variable
         // a = iterable[i]
+        try self.created_vars.put(statement.var_name, void{});
         const iterable_ident_expr = try self.allocator.create(ast.Expr);
         iterable_ident_expr.* = ast.Expr{ .ident = iterable_ident };
         const loop_var_ident = try self.allocator.create(ast.Expr);
@@ -368,6 +384,7 @@ pub const ControlFlowGraph = struct {
     name: []const u8,
     args: std.ArrayList(Ident),
     blocks: std.AutoHashMap(u32, *Block),
+    created_vars: std.StringHashMap(void),
     entry: *Block,
     exit: *Block,
 
@@ -376,6 +393,8 @@ pub const ControlFlowGraph = struct {
             block.deinit();
         }
         self.blocks.deinit();
+        self.args.deinit();
+        self.created_vars.deinit();
     }
 };
 

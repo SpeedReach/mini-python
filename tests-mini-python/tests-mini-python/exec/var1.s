@@ -376,6 +376,10 @@ print_list:
 print_list_for_init:
     movq    $0, (%rsp)              # Initialize i=0, and store it on -24(%rbp)
 print_list_for_inner:
+    movq    -8(%rbp), %rbx          # Check if we are at the end of the list
+    movq    -24(%rbp), %rcx         # Set rcx to i
+    cmpq    %rbx, %rcx 
+    jge print_list_for_end
     movq    -16(%rbp), %rbx         # Set rbx to the pointer to the start of the string
     movq    -24(%rbp), %rcx         # Set rcx to i
     imulq   $8, %rcx                # Since every char is 8 bytes in mini-python, we have to * 8
@@ -424,8 +428,8 @@ runtime_panic:
 
     call printf             # Call the `printf` function
     movq    $60, %rax                     # System call number for `exit`
-    #xorq    %rdi, %rdi                    # Status 0 (successful exit)
-    movq    $1, %rdi
+    #xorq    %rdi, %rdi                    
+    movq    $1, %rdi              # Status 1 (error exit)
     syscall                           # Make the system call
 
 _builtin_cmp:

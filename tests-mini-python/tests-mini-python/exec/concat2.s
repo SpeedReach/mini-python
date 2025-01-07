@@ -374,6 +374,10 @@ print_list:
 print_list_for_init:
     movq    $0, (%rsp)              # Initialize i=0, and store it on -24(%rbp)
 print_list_for_inner:
+    movq    -8(%rbp), %rbx          # Check if we are at the end of the list
+    movq    -24(%rbp), %rcx         # Set rcx to i
+    cmpq    %rbx, %rcx 
+    jge print_list_for_end
     movq    -16(%rbp), %rbx         # Set rbx to the pointer to the start of the string
     movq    -24(%rbp), %rcx         # Set rcx to i
     imulq   $8, %rcx                # Since every char is 8 bytes in mini-python, we have to * 8
@@ -422,8 +426,8 @@ runtime_panic:
 
     call printf             # Call the `printf` function
     movq    $60, %rax                     # System call number for `exit`
-    #xorq    %rdi, %rdi                    # Status 0 (successful exit)
-    movq    $1, %rdi
+    #xorq    %rdi, %rdi                    
+    movq    $1, %rdi              # Status 1 (error exit)
     syscall                           # Make the system call
 
 _builtin_cmp:
@@ -658,10 +662,15 @@ __make_3_elseBlock:
     call    __make
     addq    $8, %rsp
     movq    %rax, -16(%rbp)
-    movq    -16(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $3,         %rcx
-    jne     runtime_panic   
+    malloc  $17
+    movq    $3, (%rax)
+    movq    $1, 8(%rax)
+    movb    $97, 16(%rax)
+    pushq   %rax
+    movq    -16(%rbp), %rax
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -56(%rbp)
     movq    -56(%rbp), %rax
     movq    %rbp, %rsp

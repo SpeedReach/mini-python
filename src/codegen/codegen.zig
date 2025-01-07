@@ -273,7 +273,8 @@ fn writeAssignment(allocator: Allocator, w: std.io.AnyWriter, assignment: ssa.As
             try w.print("{s}movq    %rax,       {d}(%rbp)\n", .{ Indent, assign_offset });
         },
         .FunctionCall => |function_call| {
-            for (function_call.args.items) |arg| {
+            for (0..function_call.args.items.len) |idx| {
+                const arg = function_call.args.items[function_call.args.items.len - idx - 1];
                 switch (arg) {
                     .Var => {
                         const varname = try getVarName(allocator, arg.Var);
@@ -486,47 +487,12 @@ fn getRandBranchName(allocator: Allocator) ![]const u8 {
 fn writeBinOp(allocator: Allocator, w: std.io.AnyWriter, bin_op: ssa.BinOpExpr, rbp_offsets: *const std.StringHashMap(i64)) !void {
     switch (bin_op.op) {
         .add => {
-            if (bin_op.lhs == .Var and bin_op.rhs == .Var) {
-                const lhs_varname = try getVarName(allocator, bin_op.lhs.Var);
-                defer allocator.free(lhs_varname);
-                const lhs_offset = rbp_offsets.get(lhs_varname).?;
-                const rhs_varname = try getVarName(allocator, bin_op.rhs.Var);
-                defer allocator.free(rhs_varname);
-                const rhs_offset = rbp_offsets.get(rhs_varname).?;
-                try w.print("{s}movq    {d}(%rbp),  %rdi\n", .{ Indent, lhs_offset });
-                try w.print("{s}movq    {d}(%rbp),  %rsi\n", .{ Indent, rhs_offset });
-                try w.print("{s}call    _builtin_add    \n", .{Indent});
-                return;
-            }
-            //We assume constant folding is applied, so atmost one side is a constant
-            const cnst = if (bin_op.lhs == .Var) bin_op.rhs.Const else bin_op.lhs.Const;
-            const variable = if (bin_op.lhs == .Var) bin_op.lhs.Var else bin_op.rhs.Var;
-            const varname = try getVarName(allocator, variable);
-            defer allocator.free(varname);
-            const offset = rbp_offsets.get(varname).?;
-            if (cnst == .int) {
-                //check if variable is int
-                try w.print("{s}movq    {d}(%rbp),  %rax\n", .{ Indent, offset });
-                try w.print("{s}movq    (%rax),     %rcx\n", .{Indent});
-                try w.print("{s}cmpq    $2,         %rcx\n", .{Indent});
-                try w.print("{s}jne     runtime_panic   \n", .{Indent});
-                try w.print("{s}movq    8(%rax),    %rax\n", .{Indent});
-                try w.print("{s}addq    ${d},       %rax\n", .{ Indent, cnst.int });
-                try w.print("{s}pushq   %rax            \n", .{Indent});
-                try w.print("{s}malloc  $16             \n", .{Indent});
-                try w.print("{s}movq    $2,     (%rax)  \n", .{Indent});
-                try w.print("{s}popq    %r9             \n", .{Indent});
-                try w.print("{s}movq    %r9,     8(%rax)\n", .{Indent});
-                return;
-            }
-            if (cnst == .string) {
-                try writeConst(w, cnst);
-                try w.print("{s}pushq   %rax\n", .{Indent});
-                try w.print("{s}movq    {d}(%rbp),  %rax\n", .{ Indent, offset });
-                try w.print("{s}movq    (%rax),     %rcx\n", .{Indent});
-                try w.print("{s}cmpq    $3,         %rcx\n", .{Indent});
-                try w.print("{s}jne     runtime_panic   \n", .{Indent});
-            }
+            try writeVal(allocator, w, bin_op.lhs, rbp_offsets);
+            try w.print("{s}pushq   %rax\n", .{Indent});
+            try writeVal(allocator, w, bin_op.rhs, rbp_offsets);
+            try w.print("{s}popq    %rdi\n", .{Indent});
+            try w.print("{s}movq    %rax, %rsi\n", .{Indent});
+            try w.print("{s}call    _builtin_add\n", .{Indent});
         },
         .@"and" => {
             try writeIsBool(allocator, w, bin_op.lhs, rbp_offsets);
@@ -712,16 +678,16 @@ fn writeBinOp(allocator: Allocator, w: std.io.AnyWriter, bin_op: ssa.BinOpExpr, 
             try w.print("{s}movq    %rax, %rsi\n", .{Indent});
             try w.print("{s}call    _builtin_cmp\n", .{Indent});
             try w.print("{s}cmpq    $1, %rax\n", .{Indent});
-            const le_label = try getRandBranchName(allocator);
+            const gt_label = try getRandBranchName(allocator);
             const else_label = try getRandBranchName(allocator);
             const end_label = try getRandBranchName(allocator);
-            try w.print("{s}je      {s}\n", .{ Indent, le_label });
+            try w.print("{s}je      {s}\n", .{ Indent, gt_label });
             try w.print("{s}jmp {s}\n", .{ Indent, else_label });
-            try w.print("{s}:\n", .{le_label});
-            try w.print("{s}movq    $1, %rax\n", .{Indent});
+            try w.print("{s}:\n", .{gt_label});
+            try w.print("{s}movq    $0, %rax\n", .{Indent});
             try w.print("{s}jmp     {s}\n", .{ Indent, end_label });
             try w.print("{s}:\n", .{else_label});
-            try w.print("{s}movq    $0, %rax\n", .{Indent});
+            try w.print("{s}movq    $1, %rax\n", .{Indent});
             try w.print("{s}jmp     {s}\n", .{ Indent, end_label });
             try w.print("{s}:\n", .{end_label});
             try w.print("{s}pushq  %rax\n", .{Indent});

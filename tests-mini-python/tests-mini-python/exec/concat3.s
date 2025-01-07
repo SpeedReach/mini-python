@@ -374,6 +374,10 @@ print_list:
 print_list_for_init:
     movq    $0, (%rsp)              # Initialize i=0, and store it on -24(%rbp)
 print_list_for_inner:
+    movq    -8(%rbp), %rbx          # Check if we are at the end of the list
+    movq    -24(%rbp), %rcx         # Set rcx to i
+    cmpq    %rbx, %rcx 
+    jge print_list_for_end
     movq    -16(%rbp), %rbx         # Set rbx to the pointer to the start of the string
     movq    -24(%rbp), %rcx         # Set rcx to i
     imulq   $8, %rcx                # Since every char is 8 bytes in mini-python, we have to * 8
@@ -422,8 +426,8 @@ runtime_panic:
 
     call printf             # Call the `printf` function
     movq    $60, %rax                     # System call number for `exit`
-    #xorq    %rdi, %rdi                    # Status 0 (successful exit)
-    movq    $1, %rdi
+    #xorq    %rdi, %rdi                    
+    movq    $1, %rdi              # Status 1 (error exit)
     syscall                           # Make the system call
 
 _builtin_cmp:
@@ -583,9 +587,12 @@ main_0_entry:
     movq    $0,   8(%rax)
     popq    %rax
 
-    movq    -40(%rbp),  %rdi
-    movq    -8(%rbp),  %rsi
-    call    _builtin_add    
+    movq    -40(%rbp), %rax
+    pushq   %rax
+    movq    -8(%rbp), %rax
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -16(%rbp)
     movq    -16(%rbp), %rax
     pushq   %rax
@@ -631,20 +638,23 @@ main_0_entry:
     movq    %rax,   32(%rbx)
     popq    %rax
 
-    movq    -56(%rbp),  %rdi
-    movq    -24(%rbp),  %rsi
-    call    _builtin_add    
+    movq    -56(%rbp), %rax
+    pushq   %rax
+    movq    -24(%rbp), %rax
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -48(%rbp)
     movq    -48(%rbp), %rax
     pushq   %rax
     print
     malloc  $16
     movq    $2, (%rax)
-    movq    $4, 8(%rax)
+    movq    $7, 8(%rax)
     pushq   %rax
     malloc  $16
     movq    $2, (%rax)
-    movq    $7, 8(%rax)
+    movq    $4, 8(%rax)
     pushq   %rax
     call    __f
     addq    $16, %rsp
@@ -738,28 +748,28 @@ __f_3ifExit:
     movq    %rax,   16(%rbx)
     popq    %rax
 
-    movq    -32(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $1,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
-    movq    %rax,       -96(%rbp)
-    movq    -96(%rbp),  %rax
+    movq    -32(%rbp), %rax
     pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
+    movq    %rax,       -96(%rbp)
     movq    -8(%rbp),  %rax
+    pushq   %rax
+    movq    -96(%rbp),  %rax
     pushq   %rax
     call    __f
     addq    $16, %rsp
     movq    %rax, -24(%rbp)
-    movq    -80(%rbp),  %rdi
-    movq    -24(%rbp),  %rsi
-    call    _builtin_add    
+    movq    -80(%rbp), %rax
+    pushq   %rax
+    movq    -24(%rbp), %rax
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -40(%rbp)
     movq    -40(%rbp), %rax
     movq    %rbp, %rsp

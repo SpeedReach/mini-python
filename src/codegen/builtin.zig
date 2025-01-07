@@ -367,6 +367,10 @@ pub const builtin =
     \\print_list_for_init:
     \\    movq    $0, (%rsp)              # Initialize i=0, and store it on -24(%rbp)
     \\print_list_for_inner:
+    \\    movq    -8(%rbp), %rbx          # Check if we are at the end of the list
+    \\    movq    -24(%rbp), %rcx         # Set rcx to i
+    \\    cmpq    %rbx, %rcx 
+    \\    jge print_list_for_end
     \\    movq    -16(%rbp), %rbx         # Set rbx to the pointer to the start of the string
     \\    movq    -24(%rbp), %rcx         # Set rcx to i
     \\    imulq   $8, %rcx                # Since every char is 8 bytes in mini-python, we have to * 8

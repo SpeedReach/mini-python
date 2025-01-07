@@ -374,6 +374,10 @@ print_list:
 print_list_for_init:
     movq    $0, (%rsp)              # Initialize i=0, and store it on -24(%rbp)
 print_list_for_inner:
+    movq    -8(%rbp), %rbx          # Check if we are at the end of the list
+    movq    -24(%rbp), %rcx         # Set rcx to i
+    cmpq    %rbx, %rcx 
+    jge print_list_for_end
     movq    -16(%rbp), %rbx         # Set rbx to the pointer to the start of the string
     movq    -24(%rbp), %rcx         # Set rcx to i
     imulq   $8, %rcx                # Since every char is 8 bytes in mini-python, we have to * 8
@@ -422,8 +426,8 @@ runtime_panic:
 
     call printf             # Call the `printf` function
     movq    $60, %rax                     # System call number for `exit`
-    #xorq    %rdi, %rdi                    # Status 0 (successful exit)
-    movq    $1, %rdi
+    #xorq    %rdi, %rdi                    
+    movq    $1, %rdi              # Status 1 (error exit)
     syscall                           # Make the system call
 
 _builtin_cmp:
@@ -709,9 +713,9 @@ __iter_3ifExit:
     movq    %rax,       -80(%rbp)
     jmp __iter_4_ifCondBlock
 __iter_4_ifCondBlock:
-    movq    -32(%rbp),  %rax
-    pushq   %rax
     movq    -64(%rbp),  %rax
+    pushq   %rax
+    movq    -32(%rbp),  %rax
     pushq   %rax
     call    __add
     addq    $16, %rsp
@@ -772,28 +776,25 @@ __iter_5_ifBody:
     movq    %rax,       -80(%rbp)
     jmp __iter_6ifExit
 __iter_6ifExit:
-    movq    -168(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $1,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
-    movq    %rax,       -232(%rbp)
-    movq    -136(%rbp),  %rax
+    movq    -168(%rbp), %rax
     pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
+    movq    %rax,       -232(%rbp)
     movq    -80(%rbp),  %rax
+    pushq   %rax
+    movq    -136(%rbp),  %rax
     pushq   %rax
     call    __sub
     addq    $16, %rsp
     movq    %rax, -200(%rbp)
-    movq    -200(%rbp),  %rax
-    pushq   %rax
     movq    -40(%rbp),  %rax
+    pushq   %rax
+    movq    -200(%rbp),  %rax
     pushq   %rax
     call    __add
     addq    $16, %rsp
@@ -805,36 +806,36 @@ __iter_6ifExit:
     call    __of_int
     addq    $8, %rsp
     movq    %rax, -224(%rbp)
-    movq    -256(%rbp),  %rax
-    pushq   %rax
     movq    -8(%rbp),  %rax
+    pushq   %rax
+    movq    -256(%rbp),  %rax
     pushq   %rax
     call    __mul
     addq    $16, %rsp
     movq    %rax, -192(%rbp)
-    movq    -224(%rbp),  %rax
-    pushq   %rax
     movq    -192(%rbp),  %rax
+    pushq   %rax
+    movq    -224(%rbp),  %rax
     pushq   %rax
     call    __mul
     addq    $16, %rsp
     movq    %rax, -24(%rbp)
-    movq    -24(%rbp),  %rax
-    pushq   %rax
     movq    -184(%rbp),  %rax
+    pushq   %rax
+    movq    -24(%rbp),  %rax
     pushq   %rax
     call    __add
     addq    $16, %rsp
     movq    %rax, -216(%rbp)
-    movq    -232(%rbp),  %rax
-    pushq   %rax
-    movq    -40(%rbp),  %rax
-    pushq   %rax
-    movq    -184(%rbp),  %rax
+    movq    -216(%rbp),  %rax
     pushq   %rax
     movq    -208(%rbp),  %rax
     pushq   %rax
-    movq    -216(%rbp),  %rax
+    movq    -184(%rbp),  %rax
+    pushq   %rax
+    movq    -40(%rbp),  %rax
+    pushq   %rax
+    movq    -232(%rbp),  %rax
     pushq   %rax
     call    __iter
     addq    $40, %rsp
@@ -885,9 +886,9 @@ __main_0_entry:
     movq    %rax, -472(%rbp)
     movq    -472(%rbp),  %rax     
     movq    %rax,       -176(%rbp)
-    movq    -176(%rbp),  %rax
-    pushq   %rax
     movq    -464(%rbp),  %rax
+    pushq   %rax
+    movq    -176(%rbp),  %rax
     pushq   %rax
     call    __sub
     addq    $16, %rsp
@@ -899,9 +900,9 @@ __main_0_entry:
     call    __of_int
     addq    $8, %rsp
     movq    %rax, -536(%rbp)
-    movq    -616(%rbp),  %rax
-    pushq   %rax
     movq    -536(%rbp),  %rax
+    pushq   %rax
+    movq    -616(%rbp),  %rax
     pushq   %rax
     call    __div
     addq    $16, %rsp
@@ -926,9 +927,9 @@ __main_0_entry:
     movq    %rax, -256(%rbp)
     movq    -256(%rbp),  %rax     
     movq    %rax,       -120(%rbp)
-    movq    -120(%rbp),  %rax
-    pushq   %rax
     movq    -576(%rbp),  %rax
+    pushq   %rax
+    movq    -120(%rbp),  %rax
     pushq   %rax
     call    __sub
     addq    $16, %rsp
@@ -940,9 +941,9 @@ __main_0_entry:
     call    __of_int
     addq    $8, %rsp
     movq    %rax, -40(%rbp)
-    movq    -224(%rbp),  %rax
-    pushq   %rax
     movq    -40(%rbp),  %rax
+    pushq   %rax
+    movq    -224(%rbp),  %rax
     pushq   %rax
     call    __div
     addq    $16, %rsp
@@ -1065,16 +1066,16 @@ __main_2forBody:
     call    __of_int
     addq    $8, %rsp
     movq    %rax, -272(%rbp)
-    movq    -272(%rbp),  %rax
-    pushq   %rax
     movq    -304(%rbp),  %rax
+    pushq   %rax
+    movq    -272(%rbp),  %rax
     pushq   %rax
     call    __mul
     addq    $16, %rsp
     movq    %rax, -368(%rbp)
-    movq    -528(%rbp),  %rax
-    pushq   %rax
     movq    -368(%rbp),  %rax
+    pushq   %rax
+    movq    -528(%rbp),  %rax
     pushq   %rax
     call    __add
     addq    $16, %rsp
@@ -1115,17 +1116,14 @@ __main_2forBody:
     movq    %rax, -88(%rbp)
     movq    -88(%rbp),  %rax     
     movq    %rax,       -56(%rbp)
-    movq    -16(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $1,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
+    movq    -16(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -96(%rbp)
     movq    -96(%rbp),  %rax     
     movq    %rax,       -360(%rbp)
@@ -1234,33 +1232,30 @@ __main_4forBody:
     call    __of_int
     addq    $8, %rsp
     movq    %rax, -392(%rbp)
-    movq    -392(%rbp),  %rax
-    pushq   %rax
     movq    -280(%rbp),  %rax
+    pushq   %rax
+    movq    -392(%rbp),  %rax
     pushq   %rax
     call    __mul
     addq    $16, %rsp
     movq    %rax, -512(%rbp)
-    movq    -152(%rbp),  %rax
-    pushq   %rax
     movq    -512(%rbp),  %rax
+    pushq   %rax
+    movq    -152(%rbp),  %rax
     pushq   %rax
     call    __add
     addq    $16, %rsp
     movq    %rax, -592(%rbp)
     movq    -592(%rbp),  %rax     
     movq    %rax,       -456(%rbp)
-    movq    -128(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $1,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
+    movq    -128(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -104(%rbp)
     movq    -104(%rbp),  %rax     
     movq    %rax,       -144(%rbp)
@@ -1308,9 +1303,9 @@ __main_4forBody:
     movq    %rax,       -344(%rbp)
     jmp __main_5_ifCondBlock
 __main_5_ifCondBlock:
-    movq    -136(%rbp),  %rax
-    pushq   %rax
     movq    -560(%rbp),  %rax
+    pushq   %rax
+    movq    -136(%rbp),  %rax
     pushq   %rax
     call    __inside
     addq    $16, %rsp
@@ -1323,10 +1318,15 @@ __main_5_ifCondBlock:
     je      __main_6_ifBody
     jmp     __main_7_elseBlock
 __main_6_ifBody:
-    movq    -344(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $3,         %rcx
-    jne     runtime_panic   
+    movq    -344(%rbp), %rax
+    pushq   %rax
+    malloc  $17
+    movq    $3, (%rax)
+    movq    $1, 8(%rax)
+    movb    $48, 16(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -488(%rbp)
     movq    -488(%rbp),  %rax     
     movq    %rax,       -600(%rbp)
@@ -1374,10 +1374,15 @@ __main_6_ifBody:
     movq    %rax,       -344(%rbp)
     jmp __main_8_
 __main_7_elseBlock:
-    movq    -336(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $3,         %rcx
-    jne     runtime_panic   
+    movq    -336(%rbp), %rax
+    pushq   %rax
+    malloc  $17
+    movq    $3, (%rax)
+    movq    $1, 8(%rax)
+    movb    $49, 16(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -496(%rbp)
     movq    -496(%rbp),  %rax     
     movq    %rax,       -216(%rbp)
@@ -1627,17 +1632,14 @@ __mul_0_entry:
     movq    %rax,       -48(%rbp)
     movq    -48(%rbp),  %rax     
     movq    %rax,       -72(%rbp)
-    movq    -72(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $4096,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
+    movq    -72(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $4096, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -24(%rbp)
     movq    $8192, %rax
     pushq   %rax
@@ -1679,9 +1681,12 @@ __add_0_entry:
     movq    %rax,       -8(%rbp)
     movq    24(%rbp),  %rax
     movq    %rax,       -24(%rbp)
-    movq    -8(%rbp),  %rdi
-    movq    -24(%rbp),  %rsi
-    call    _builtin_add    
+    movq    -8(%rbp), %rax
+    pushq   %rax
+    movq    -24(%rbp), %rax
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -16(%rbp)
     movq    -16(%rbp), %rax
     movq    %rbp, %rsp
@@ -1719,17 +1724,17 @@ __inside_0_entry:
     call    __of_int
     addq    $8, %rsp
     movq    %rax, -8(%rbp)
-    malloc  $16
-    movq    $2, (%rax)
-    movq    $0, 8(%rax)
-    pushq   %rax
-    movq    -24(%rbp),  %rax
-    pushq   %rax
-    movq    -40(%rbp),  %rax
+    movq    -8(%rbp),  %rax
     pushq   %rax
     movq    -32(%rbp),  %rax
     pushq   %rax
-    movq    -8(%rbp),  %rax
+    movq    -40(%rbp),  %rax
+    pushq   %rax
+    movq    -24(%rbp),  %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $0, 8(%rax)
     pushq   %rax
     call    __iter
     addq    $40, %rsp
@@ -1789,9 +1794,12 @@ __div_0_entry:
     movq    $2,     (%rax)
     movq    %r9,    8(%rax)
     movq    %rax,       -8(%rbp)
-    movq    -80(%rbp),  %rdi
-    movq    -8(%rbp),  %rsi
-    call    _builtin_add    
+    movq    -80(%rbp), %rax
+    pushq   %rax
+    movq    -8(%rbp), %rax
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
     movq    %rax,       -32(%rbp)
     movq    -64(%rbp), %rax
     movq    (%rax), %rcx

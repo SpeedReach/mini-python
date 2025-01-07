@@ -7,7 +7,6 @@
     panic_str: .string "error\n\0"
 .section .note.GNU-stack,"",@progbits
 .bss
-    x: .zero 8
     main_1_iterable: .zero 8
     main_1forIndex: .zero 8
     main_1forN: .zero 8
@@ -379,6 +378,10 @@ print_list:
 print_list_for_init:
     movq    $0, (%rsp)              # Initialize i=0, and store it on -24(%rbp)
 print_list_for_inner:
+    movq    -8(%rbp), %rbx          # Check if we are at the end of the list
+    movq    -24(%rbp), %rcx         # Set rcx to i
+    cmpq    %rbx, %rcx 
+    jge print_list_for_end
     movq    -16(%rbp), %rbx         # Set rbx to the pointer to the start of the string
     movq    -24(%rbp), %rcx         # Set rcx to i
     imulq   $8, %rcx                # Since every char is 8 bytes in mini-python, we have to * 8
@@ -427,8 +430,8 @@ runtime_panic:
 
     call printf             # Call the `printf` function
     movq    $60, %rax                     # System call number for `exit`
-    #xorq    %rdi, %rdi                    # Status 0 (successful exit)
-    movq    $1, %rdi
+    #xorq    %rdi, %rdi                    
+    movq    $1, %rdi              # Status 1 (error exit)
     syscall                           # Make the system call
 
 _builtin_cmp:
@@ -570,7 +573,7 @@ add_list:
 main:
     pushq  %rbp
     movq    %rsp, %rbp
-    subq    $88, %rsp
+    subq    $96, %rsp
 main_0_entry:
     malloc  $16
     movq    $2, (%rax)
@@ -581,8 +584,8 @@ main_0_entry:
     movq    $42, 8(%rax)
     movq    %rax, (main_1_iterable)
     movq    (main_1_iterable), %rax
-    movq    %rax, -48(%rbp)
-    movq    -48(%rbp),  %rax
+    movq    %rax, -56(%rbp)
+    movq    -56(%rbp),  %rax
     pushq   %rax
     call    __len
     addq    $8, %rsp
@@ -592,12 +595,12 @@ main_0_entry:
     jmp main_1_forCondBlock
 main_1_forCondBlock:
     movq    (main_1forIndex), %rax
-    movq    %rax, -24(%rbp)
+    movq    %rax, -32(%rbp)
     movq    (main_1forN), %rax
-    movq    %rax, -72(%rbp)
-    movq    -24(%rbp), %rax
+    movq    %rax, -80(%rbp)
+    movq    -32(%rbp), %rax
     pushq   %rax
-    movq    -72(%rbp), %rax
+    movq    -80(%rbp), %rax
     popq    %rdi
     movq    %rax, %rsi
     call    _builtin_cmp
@@ -616,8 +619,8 @@ branch_2:
     popq    %r9
     movq    $1,     (%rax)
     movq    %r9,    8(%rax)
-    movq    %rax,       -32(%rbp)
-    movq   -32(%rbp), %rax
+    movq    %rax,       -40(%rbp)
+    movq   -40(%rbp), %rax
     pushq  %rax
     call   is_bool
     addq  $8, %rsp
@@ -626,15 +629,15 @@ branch_2:
     jmp     main_forexit_3
 main_2forBody:
     movq    (main_1_iterable), %rax
-    movq    %rax, -56(%rbp)
+    movq    %rax, -64(%rbp)
     movq    (main_1forIndex), %rax
-    movq    %rax, -40(%rbp)
-    movq    -56(%rbp),  %rax
+    movq    %rax, -48(%rbp)
+    movq    -64(%rbp),  %rax
     pushq   %rax
     movq    (%rax), %rax
     cmpq    $4, %rax
     jne     runtime_panic
-    movq    -40(%rbp), %rbx
+    movq    -48(%rbp), %rbx
     movq    (%rbx), %rax
     cmpq    $2, %rax
     jne     runtime_panic
@@ -646,30 +649,27 @@ main_2forBody:
     imul    $8, %rbx
     addq    %rbx, %rax
     movq   16(%rax), %rax
-    movq    %rax, -80(%rbp)
-    movq    -80(%rbp), %rax
-    movq    %rax, (x)
-    movq    (x), %rax
     movq    %rax, -88(%rbp)
-    movq    -88(%rbp), %rax
+    movq    -88(%rbp),  %rax     
+    movq    %rax,       -72(%rbp)
+    movq    -72(%rbp), %rax
     pushq   %rax
     print
     movq    (main_1forIndex), %rax
-    movq    %rax, -16(%rbp)
-    movq    -16(%rbp),  %rax
-    movq    (%rax),     %rcx
-    cmpq    $2,         %rcx
-    jne     runtime_panic   
-    movq    8(%rax),    %rax
-    addq    $1,       %rax
-    pushq   %rax            
-    malloc  $16             
-    movq    $2,     (%rax)  
-    popq    %r9             
-    movq    %r9,     8(%rax)
-    movq    %rax,       -64(%rbp)
-    movq    -64(%rbp), %rax
+    movq    %rax, -96(%rbp)
+    movq    -96(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
+    movq    %rax,       -16(%rbp)
+    movq    -16(%rbp), %rax
     movq    %rax, (main_1forIndex)
+    movq    -72(%rbp),  %rax     
+    movq    %rax,       -24(%rbp)
     jmp main_1_forCondBlock
 main_forexit_3:
     jmp main_end

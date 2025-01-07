@@ -777,6 +777,10 @@ fn identifyGlobalContext(cfg: *const CfgIR, global_vars: *std.StringHashMap(void
     while (it.next()) |block| {
         try identifyAssignedVars(block.*, global_vars);
     }
+    var w = cfg.main.created_vars.keyIterator();
+    while (w.next()) |k| {
+        _ = global_vars.remove(k.*);
+    }
 }
 
 fn identifyUsedVars(block: *CfgBlock, used_vars: *std.StringHashMap(void), const_strings: *std.StringHashMap(void)) !void {
