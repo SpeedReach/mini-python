@@ -75,7 +75,32 @@ pub const Analyzer = struct {
                     try self.analyzeStatements(if_else_statement.if_body.statements);
                     try self.analyzeStatements(if_else_statement.else_body.statements);
                 },
-                else => {},
+                ast.StatementTag.for_in_statement => |for_in_statement| {
+                    try self.analyzeExpr(for_in_statement.iterable);
+                    try self.analyzeStatements(for_in_statement.body.statements);
+                },
+                ast.StatementTag.simple_statement => {
+                    const simple_statement = statement.simple_statement;
+                    switch (simple_statement) {
+                        ast.SimpleStatementTag.@"return" => |return_statement| {
+                            try self.analyzeExpr(return_statement);
+                        },
+                        ast.SimpleStatementTag.assign => |assign| {
+                            try self.analyzeExpr(assign.rhs);
+                        },
+                        ast.SimpleStatementTag.assign_list => |assign_list| {
+                            try self.analyzeExpr(assign_list.lhs);
+                            try self.analyzeExpr(assign_list.idx);
+                            try self.analyzeExpr(assign_list.rhs);
+                        },
+                        ast.SimpleStatementTag.print => |print| {
+                            try self.analyzeExpr(print.value);
+                        },
+                        ast.SimpleStatementTag.expr => |expr| {
+                            try self.analyzeExpr(expr);
+                        },
+                    }
+                },
             }
         }
     }
@@ -98,11 +123,22 @@ pub const Analyzer = struct {
                 try self.analyzeExpr(bin_op.lhs);
                 try self.analyzeExpr(bin_op.rhs);
             },
+            ast.ExprTag.unary_expr => |unary_expr| {
+                try self.analyzeExpr(unary_expr);
+            },
+            ast.ExprTag.not_expr => |not_expr| {
+                try self.analyzeExpr(not_expr);
+            },
+            ast.ExprTag.ident, ast.ExprTag.@"const" => {},
+            ast.ExprTag.list_declare => |list_declare| {
+                for (list_declare.values.items) |item| {
+                    try self.analyzeExpr(item);
+                }
+            },
             ast.ExprTag.list_access => |list_access| {
                 try self.analyzeExpr(list_access.list);
                 try self.analyzeExpr(list_access.idx);
             },
-            else => {},
         }
     }
 };
