@@ -130,6 +130,7 @@ fn writeIsBool(allocator: std.mem.Allocator, writer: std.io.AnyWriter, value: ss
 }
 
 fn writeBlock(allocator: std.mem.Allocator, writer: std.io.AnyWriter, block: ssa.Block, blocks: *const std.AutoHashMap(u32, *ssa.Block), rbp_offset: *const std.StringHashMap(i64)) !void {
+    std.debug.print("building block {s}\n", .{if (block == .Decision) block.Decision.name else block.Sequential.name});
     switch (block) {
         .Decision => {
             try writer.print("{s}:\n", .{block.Decision.name});
@@ -260,6 +261,7 @@ fn writeAssignment(allocator: Allocator, w: std.io.AnyWriter, assignment: ssa.As
                 .Var => {
                     const varname = try getVarName(allocator, value.Var);
                     defer allocator.free(varname);
+                    std.debug.print("varname: {s}\n", .{varname});
                     const offset = rbp_offsets.get(varname).?;
                     try w.print("{s}movq    {d}(%rbp),  %rax     \n", .{ Indent, offset });
                     try w.print("{s}movq    %rax,       {d}(%rbp)\n", .{ Indent, assign_offset });

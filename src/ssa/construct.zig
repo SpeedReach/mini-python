@@ -155,8 +155,8 @@ pub const SSAConstructor = struct {
         dom_node: *const dom.DominanceNode,
         var_counter: *VariableCounter,
     ) !void {
+        std.debug.print("constructing block {d}\n", .{dom_node.id});
         const block = blocks.get(dom_node.id).?;
-
         //After leaving the block, we need to pop the variables from the counter
         //So dominator siblings can use the same variable names
         var var_on_entry = std.StringHashMap(ssa.Variable).init(self.allocator);
@@ -169,6 +169,7 @@ pub const SSAConstructor = struct {
             while (it.next()) |name_ptr| {
                 const name = name_ptr.*;
                 try new_vars.put(name, void{});
+                std.debug.print("{s}\n", .{name});
                 const latest_version = var_counter.getLatest(name);
                 if (latest_version != null) {
                     try var_on_entry.put(name, latest_version.?);
@@ -186,9 +187,12 @@ pub const SSAConstructor = struct {
         }
 
         const entry_block = try self.buildBlock(self.allocator, args, block.*, var_counter);
-
+        std.debug.print("{s} has new values\n", .{getBlockName(block)});
         try self.setSuccessorsPhiVals(blocks, dom_node.id, new_vars, var_counter);
-
+        var w = new_vars.keyIterator();
+        while (w.next()) |name| {
+            std.debug.print("new var: {s}\n", .{name.*});
+        }
         try dest.put(dom_node.id, entry_block);
         for (dom_node.children.items) |child| {
             try self.dfsBuildBlock(null, blocks, dest, child, var_counter);
@@ -701,8 +705,10 @@ pub fn constructSSA(allocator: std.mem.Allocator, cfgIR: *const CfgIR) !ssa.Prog
 
 fn annotateCfg(allocator: std.mem.Allocator, global_vars: *std.StringHashMap(void), const_strings: *std.StringHashMap(void), args: std.ArrayList([]const u8), cfg: *const cfgir.ControlFlowGraph) !AnnotatedCfg {
     var blocks = std.AutoHashMap(u32, *AnnotatedBlock).init(allocator);
-    var it = cfg.blocks.valueIterator();
-    while (it.next()) |item| {
+    var it = cfg.blocks.iterator();
+    while (it.next()) |entry| {
+        const id = entry.key_ptr.*;
+        const item = entry.value_ptr;
         var used_vars = std.StringHashMap(void).init(allocator);
         try identifyUsedVars(item.*, &used_vars, const_strings);
         defer used_vars.deinit();
@@ -721,8 +727,10 @@ fn annotateCfg(allocator: std.mem.Allocator, global_vars: *std.StringHashMap(voi
             cfgir.BlockTag.Sequential => {
                 var assigned_vars = std.StringHashMap(void).init(allocator);
                 defer assigned_vars.deinit();
-                for (args.items) |arg| {
-                    try assigned_vars.put(arg, void{});
+                if (id == 0) {
+                    for (args.items) |arg| {
+                        try assigned_vars.put(arg, void{});
+                    }
                 }
                 try identifyAssignedVars(item.*, &assigned_vars);
                 const block = try allocator.create(AnnotatedBlock);
@@ -884,12 +892,14 @@ fn identifyExprUsedVars(expr: *ast.Expr, used_vars: *std.StringHashMap(void), co
 }
 
 fn identifyAssignedVars(block: *CfgBlock, var_set: *std.StringHashMap(void)) !void {
+    std.debug.print("identifying assigned vars {s}\n", .{if (block.* == .Decision) block.*.Decision.name else block.*.Sequential.name});
     switch (block.*) {
         cfgir.BlockTag.Decision => {},
         cfgir.BlockTag.Sequential => {
             for (block.*.Sequential.statements.items) |stmt| {
                 switch (stmt) {
                     .assign => {
+                        std.debug.print("assign {s}\n", .{stmt.assign.lhs});
                         try var_set.put(stmt.assign.lhs, void{});
                     },
                     .assign_list => {
@@ -913,6 +923,7 @@ fn toSSAConst(csnt: ast.Const) ssa.Const {
 fn identifyListAssignedVars(list: *ast.Expr, var_set: *std.StringHashMap(void)) !void {
     switch (list.*) {
         .ident => {
+            std.debug.print("list assign {s}\n", .{list.ident});
             try var_set.put(list.ident, void{});
         },
         .list_access => {

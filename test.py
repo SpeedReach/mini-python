@@ -1,7 +1,11 @@
-def w():
-    i = 0
-    if True:
-        i = 1
-    else:
-        i = 2
-    print(i)
+
+def primes(n):
+    l = range2(2, n)
+    nb = 0
+    for x in l:
+        if x > 0:
+            l[nb] = x
+            nb = nb + 1
+            filter_out(x, l)
+    return prefix(nb, l)
+

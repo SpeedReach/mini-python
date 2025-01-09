@@ -734,47 +734,182 @@ main_end:
     movq    $60, %rax
     xorq    %rdi, %rdi
     syscall
-__w:
+__primes:
     pushq  %rbp
     movq    %rsp, %rbp
-    subq    $8, %rsp
-__w_0_entry:
-    malloc  $16
-    movq    $2, (%rax)
-    movq    $0, 8(%rax)
-    movq    %rax,       -8(%rbp)
-    jmp __w_1_ifCondBlock
-__w_1_ifCondBlock:
-    movq    $1, %rax
-    cmpq    $1, %rax
-    je      __w_2_ifBody
-    jmp     __w_3_elseBlock
-__w_2_ifBody:
-    malloc  $16
-    movq    $2, (%rax)
-    movq    $1, 8(%rax)
-    movq    %rax,       -8(%rbp)
-    jmp __w_4_
-__w_3_elseBlock:
+    subq    $144, %rsp
+__primes_0_entry:
+    movq    16(%rbp),  %rax
+    movq    %rax,       -120(%rbp)
+    movq    -120(%rbp),  %rax
+    pushq   %rax
     malloc  $16
     movq    $2, (%rax)
     movq    $2, 8(%rax)
+    pushq   %rax
+    call    __range2
+    addq    $16, %rsp
+    movq    %rax, -112(%rbp)
+    movq    -112(%rbp),  %rax     
+    movq    %rax,       -144(%rbp)
+    movq    -144(%rbp),  %rax     
+    movq    %rax,       -24(%rbp)
+    movq    -24(%rbp),  %rax
+    pushq   %rax
+    call    __len
+    addq    $8, %rsp
+    movq    %rax, -80(%rbp)
+    movq    -80(%rbp),  %rax     
+    movq    %rax,       -48(%rbp)
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $0, 8(%rax)
     movq    %rax,       -8(%rbp)
-    jmp __w_4_
-__w_4_:
+    jmp __primes_1_forCondBlock
+__primes_1_forCondBlock:
     movq    -8(%rbp), %rax
     pushq   %rax
-    print
+    movq    -48(%rbp), %rax
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_cmp
+    cmpq    $-1, %rax
+    je      branch_0
+    jmp branch_1
+branch_0:
+    movq    $1, %rax
+    jmp     branch_2
+branch_1:
+    movq    $0, %rax
+    jmp     branch_2
+branch_2:
+    pushq  %rax
     malloc  $16
-    movq    $0, (%rax)
+    popq    %r9
+    movq    $1,     (%rax)
+    movq    %r9,    8(%rax)
+    movq    %rax,       -104(%rbp)
+    movq   -104(%rbp), %rax
+    pushq  %rax
+    call   is_bool
+    addq  $8, %rsp
+    cmpq    $1, %rax
+    je      __primes_2forBody
+    jmp     __primes_forexit_6
+__primes_2forBody:
+    movq    -24(%rbp),  %rax
+    pushq   %rax
+    movq    (%rax), %rax
+    cmpq    $4, %rax
+    jne     runtime_panic
+    movq    -8(%rbp), %rbx
+    movq    (%rbx), %rax
+    cmpq    $2, %rax
+    jne     runtime_panic
+    movq    8(%rbx), %rbx
+    popq    %rax
+    movq    8(%rax), %rcx
+    cmpq    %rcx, %rbx
+    jge     runtime_panic
+    imul    $8, %rbx
+    addq    %rbx, %rax
+    movq   16(%rax), %rax
+    movq    %rax, -136(%rbp)
+    movq    -136(%rbp),  %rax     
+    movq    %rax,       -128(%rbp)
+    movq    -8(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $1, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_add
+    movq    %rax,       -16(%rbp)
+    movq    -16(%rbp),  %rax     
+    movq    %rax,       -88(%rbp)
+    movq    -128(%rbp),  %rax     
+    movq    %rax,       -56(%rbp)
+    movq    -88(%rbp),  %rax     
+    movq    %rax,       -8(%rbp)
+    jmp __primes_3_ifCondBlock
+__primes_3_ifCondBlock:
+    movq    -128(%rbp), %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
     movq    $0, 8(%rax)
+    popq    %rdi
+    movq    %rax, %rsi
+    call    _builtin_cmp
+    cmpq    $1, %rax
+    je      branch_3
+    movq    $0, %rax
+    jmp     branch_4
+branch_3:
+    movq    $1, %rax
+branch_4:
+    pushq  %rax
+    malloc  $16
+    popq    %r9
+    movq    $1,     (%rax)
+    movq    %r9,    8(%rax)
+    movq    %rax,       -32(%rbp)
+    movq   -32(%rbp), %rax
+    pushq  %rax
+    call   is_bool
+    addq  $8, %rsp
+    cmpq    $1, %rax
+    je      __primes_4_ifBody
+    jmp     __primes_5ifExit
+__primes_4_ifBody:
+    movq    -144(%rbp),  %rax
+    pushq   %rax
+    movq    (%rax), %rax
+    cmpq    $4, %rax
+    jne     runtime_panic
+    movq    $0, %rbx
+    popq    %rax
+    movq    8(%rax), %rcx
+    cmpq    %rcx, %rbx
+    jge     runtime_panic
+    imul    $8, %rbx
+    addq    %rbx, %rax
+    addq    $16, %rax
+    pushq   %rax
+    movq    -128(%rbp), %rax
+    popq   %rbx
+    movq    %rax, (%rbx)
+    movq    -144(%rbp),  %rax
+    movq    %rax, -40(%rbp)
+    movq    -40(%rbp),  %rax
+    pushq   %rax
+    movq    -128(%rbp),  %rax
+    pushq   %rax
+    call    __filter_out
+    addq    $16, %rsp
+    movq    %rax, -64(%rbp)
+    movq    -64(%rbp),  %rax     
+    movq    %rax,       -72(%rbp)
+    jmp __primes_5ifExit
+__primes_5ifExit:
+    jmp __primes_1_forCondBlock
+__primes_forexit_6:
+    movq    -144(%rbp),  %rax
+    pushq   %rax
+    malloc  $16
+    movq    $2, (%rax)
+    movq    $0, 8(%rax)
+    pushq   %rax
+    call    __prefix
+    addq    $16, %rsp
+    movq    %rax, -96(%rbp)
+    movq    -96(%rbp), %rax
     movq    %rbp, %rsp
     popq    %rbp
     ret
-    movq    -8(%rbp),  %rax     
-    movq    %rax,       -8(%rbp)
-    jmp __w_end
-__w_end:
+    jmp __primes_end
+__primes_end:
     movq   %rbp, %rsp
     popq   %rbp
     ret
