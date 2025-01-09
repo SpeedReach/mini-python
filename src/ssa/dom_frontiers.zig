@@ -19,10 +19,11 @@ pub fn computeDominaceFrontiers(allocator: std.mem.Allocator, dominaceTree: tree
 
     while (it.next()) |entry| {
         const predecessors = getPredecessors(entry.value_ptr.*.*);
-        if (predecessors.items.len == 0) {
+        if (predecessors.items.len <= 1) {
             continue;
         }
         const idom = getIdom(entry.key_ptr.*, dominaceTree);
+        std.debug.print("idom of {d} is {any}\n", .{ entry.key_ptr.*, idom });
         for (predecessors.items) |predecessor| {
             var runner: ?u32 = getId(predecessor.*);
             while (runner != idom and runner != null) {

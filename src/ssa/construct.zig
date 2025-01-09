@@ -752,28 +752,49 @@ fn annotateCfg(allocator: std.mem.Allocator, global_vars: *std.StringHashMap(voi
     return annotated;
 }
 
-fn insertPhis(global_var: *const std.StringHashMap(void), cfg: *const AnnotatedCfg, _: dom.DominaceFrontiers) !void {
+fn insertPhis(_: *const std.StringHashMap(void), cfg: *const AnnotatedCfg, dom_frontiers: dom.DominaceFrontiers) !void {
     var it = cfg.blocks.valueIterator();
     while (it.next()) |block| {
         switch (block.*.*) {
             AnnotatedBlockTag.Decision => {
-                var var_it = block.*.*.Decision.used_vars.keyIterator();
-                while (var_it.next()) |used_var| {
-                    if (global_var.contains(used_var.*)) {
-                        continue;
+                const frontiers = dom_frontiers.get(block.*.*.Decision.inner.id).?;
+                var frontier_it = frontiers.iterator();
+                while (frontier_it.next()) |frontier| {
+                    std.debug.print("D{d} has frontier {d}\n", .{ block.*.*.Decision.inner.id, frontier.* });
+                    var new_var_it = block.*.*.Decision.phis.keyIterator();
+                    while (new_var_it.next()) |new_var| {
+                        const frontier_block = cfg.blocks.getPtr(frontier.*).?.*;
+                        var phi_values = if (frontier_block.* == AnnotatedBlockTag.Decision) &frontier_block.*.Decision.phis else &frontier_block.*.Sequential.phis;
+                        if (phi_values.contains(new_var.*)) {
+                            continue;
+                        }
+                        try phi_values.*.put(new_var.*, std.ArrayList(ssa.PhiValue).init(block.*.*.Decision.phis.allocator));
                     }
-                    const phi_values = std.ArrayList(ssa.PhiValue).init(block.*.*.Decision.phis.allocator);
-                    try block.*.*.Decision.phis.put(used_var.*, phi_values);
                 }
             },
             AnnotatedBlockTag.Sequential => {
-                var var_it = block.*.*.Sequential.used_vars.keyIterator();
-                while (var_it.next()) |used_var| {
-                    if (global_var.contains(used_var.*)) {
-                        continue;
+                const frontiers = dom_frontiers.get(block.*.*.Sequential.inner.id).?;
+                var frontier_it = frontiers.iterator();
+                while (frontier_it.next()) |frontier| {
+                    std.debug.print("S{d} has frontier {d}\n", .{ block.*.*.Sequential.inner.id, frontier.* });
+                    var new_var_it = block.*.*.Sequential.phis.keyIterator();
+                    while (new_var_it.next()) |new_var| {
+                        const frontier_block = cfg.blocks.getPtr(frontier.*).?.*;
+                        var phi_values = if (frontier_block.* == AnnotatedBlockTag.Decision) &frontier_block.*.Decision.phis else &frontier_block.*.Sequential.phis;
+                        if (phi_values.contains(new_var.*)) {
+                            continue;
+                        }
+                        try phi_values.*.put(new_var.*, std.ArrayList(ssa.PhiValue).init(block.*.*.Sequential.phis.allocator));
                     }
-                    const phi_values = std.ArrayList(ssa.PhiValue).init(block.*.*.Sequential.phis.allocator);
-                    try block.*.*.Sequential.phis.put(used_var.*, phi_values);
+                    var new_var_it2 = block.*.*.Sequential.assigned_vars.keyIterator();
+                    while (new_var_it2.next()) |new_var| {
+                        const frontier_block = cfg.blocks.getPtr(frontier.*).?.*;
+                        var phi_values = if (frontier_block.* == AnnotatedBlockTag.Decision) &frontier_block.*.Decision.phis else &frontier_block.*.Sequential.phis;
+                        if (phi_values.contains(new_var.*)) {
+                            continue;
+                        }
+                        try phi_values.*.put(new_var.*, std.ArrayList(ssa.PhiValue).init(block.*.*.Sequential.phis.allocator));
+                    }
                 }
             },
         }
