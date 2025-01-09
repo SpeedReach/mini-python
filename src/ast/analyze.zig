@@ -42,6 +42,7 @@ pub const Analyzer = struct {
         for (ast_file.defs.items) |def| {
             try self.analyzeDef(def);
         }
+        try self.analyzeStatements(ast_file.statements);
     }
 
     fn addBuiltIn(self: *Analyzer, name: []const u8, arg_num: u8) !void {
