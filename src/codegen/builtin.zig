@@ -669,7 +669,6 @@ pub const builtin =
     \\    cmpq    $4, %r8
     \\    je _eq_list
     \\    call _builtin_cmp
-    \\w:
     \\    cmpq    $0, %rax
     \\    je    _eq_true
     \\    jmp   _eq_false

@@ -160,11 +160,15 @@ pub const SSAConstructor = struct {
         //After leaving the block, we need to pop the variables from the counter
         //So dominator siblings can use the same variable names
         var var_on_entry = std.StringHashMap(ssa.Variable).init(self.allocator);
+        //We need to keep track of variables that are assigned and updated in the block, so we can update its successors phi values
+        var new_vars = std.StringHashMap(void).init(self.allocator);
+        defer new_vars.deinit();
         defer var_on_entry.deinit();
         if (block.* == .Sequential) {
             var it = block.*.Sequential.assigned_vars.keyIterator();
             while (it.next()) |name_ptr| {
                 const name = name_ptr.*;
+                try new_vars.put(name, void{});
                 const latest_version = var_counter.getLatest(name);
                 if (latest_version != null) {
                     try var_on_entry.put(name, latest_version.?);
@@ -174,6 +178,7 @@ pub const SSAConstructor = struct {
         var it = if (block.* == .Sequential) block.*.Sequential.phis.keyIterator() else block.*.Decision.phis.keyIterator();
         while (it.next()) |name_ptr| {
             const name = name_ptr.*;
+            try new_vars.put(name, void{});
             const latest_version = var_counter.getLatest(name);
             if (latest_version != null) {
                 try var_on_entry.put(name, latest_version.?);
@@ -181,7 +186,8 @@ pub const SSAConstructor = struct {
         }
 
         const entry_block = try self.buildBlock(self.allocator, args, block.*, var_counter);
-        try self.setSuccessorsPhiVals(blocks, dom_node.id, var_counter);
+
+        try self.setSuccessorsPhiVals(blocks, dom_node.id, new_vars, var_counter);
 
         try dest.put(dom_node.id, entry_block);
         for (dom_node.children.items) |child| {
@@ -202,11 +208,14 @@ pub const SSAConstructor = struct {
             .Sequential => return block.*.Sequential.inner.*.name,
         }
     }
-    fn setPhiValues(block: *AnnotatedBlock, preccedor_id: u32, counter: *const VariableCounter) !void {
+    fn setPhiValues(block: *AnnotatedBlock, preccedor_id: u32, new_vars: std.StringHashMap(void), counter: *const VariableCounter) !void {
         switch (block.*) {
             .Decision => {
                 var it = block.*.Decision.phis.keyIterator();
                 while (it.next()) |phi| {
+                    if (!new_vars.contains(phi.*)) {
+                        continue;
+                    }
                     const latest = counter.getLatest(phi.*);
                     if (latest != null) {
                         try block.*.Decision.phis.getPtr(phi.*).?.*.append(ssa.PhiValue{ .block = preccedor_id, .value = ssa.Value{
@@ -221,6 +230,9 @@ pub const SSAConstructor = struct {
             .Sequential => {
                 var it = block.*.Sequential.phis.keyIterator();
                 while (it.next()) |phi| {
+                    if (!new_vars.contains(phi.*)) {
+                        continue;
+                    }
                     const latest = counter.getLatest(phi.*);
                     if (latest != null) {
                         try block.*.Sequential.phis.getPtr(phi.*).?.*.append(ssa.PhiValue{ .block = preccedor_id, .value = ssa.Value{
@@ -242,12 +254,13 @@ pub const SSAConstructor = struct {
         }
     }
 
-    fn setSuccessorsPhiVals(self: Self, blocks: *const std.AutoHashMap(u32, *AnnotatedBlock), start: u32, counter: *const VariableCounter) !void {
+    fn setSuccessorsPhiVals(self: Self, blocks: *const std.AutoHashMap(u32, *AnnotatedBlock), start: u32, new_vars: std.StringHashMap(void), counter: *const VariableCounter) !void {
         var walked = HashSet(u32).init(self.allocator);
         var queue = Queue(u32).init(self.allocator);
         defer walked.deinit();
         defer queue.deinit();
         try queue.enqueue(start);
+
         while (queue.dequeue()) |block_id| {
             if (walked.contains(block_id)) {
                 continue;
@@ -255,7 +268,7 @@ pub const SSAConstructor = struct {
             try walked.add(block_id);
 
             const block = blocks.get(block_id).?;
-            try setPhiValues(block, start, counter);
+            try setPhiValues(block, start, new_vars, counter);
             switch (block.*) {
                 .Decision => |des| {
                     const thenId = getBlockId(des.inner.then_block.?);
@@ -708,6 +721,9 @@ fn annotateCfg(allocator: std.mem.Allocator, global_vars: *std.StringHashMap(voi
             cfgir.BlockTag.Sequential => {
                 var assigned_vars = std.StringHashMap(void).init(allocator);
                 defer assigned_vars.deinit();
+                for (args.items) |arg| {
+                    try assigned_vars.put(arg, void{});
+                }
                 try identifyAssignedVars(item.*, &assigned_vars);
                 const block = try allocator.create(AnnotatedBlock);
                 block.* = AnnotatedBlock{

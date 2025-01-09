@@ -907,14 +907,8 @@ branch_4:
     movq    %rax,       -224(%rbp)
     movq    -224(%rbp),  %rax     
     movq    %rax,       -144(%rbp)
-    malloc  $16
-    movq    $2, (%rax)
-    movq    $0, 8(%rax)
-    movq    %rax,       -176(%rbp)
     movq    -144(%rbp),  %rax     
     movq    %rax,       -248(%rbp)
-    movq    -16(%rbp),  %rax     
-    movq    %rax,       -16(%rbp)
     movq    -96(%rbp),  %rax     
     movq    %rax,       -40(%rbp)
     movq    -216(%rbp),  %rax     
@@ -927,10 +921,6 @@ branch_4:
     movq    %rax,       -184(%rbp)
     movq    -64(%rbp),  %rax     
     movq    %rax,       -48(%rbp)
-    malloc  $16
-    movq    $2, (%rax)
-    movq    $0, 8(%rax)
-    movq    %rax,       -112(%rbp)
     movq    -128(%rbp),  %rax     
     movq    %rax,       -160(%rbp)
     jmp __filter_out_3_ifCondBlock
@@ -960,6 +950,10 @@ __filter_out_3_ifCondBlock:
     je      __filter_out_4_ifBody
     jmp     __filter_out_5ifExit
 __filter_out_4_ifBody:
+    movq    -112(%rbp), %rax
+    pushq   %rax
+c:
+    print
     movq    -160(%rbp),  %rax
     pushq   %rax
     movq    (%rax), %rax
@@ -985,27 +979,10 @@ __filter_out_4_ifBody:
     movq    %rax, (%rbx)
     movq    -160(%rbp),  %rax
     movq    %rax, -72(%rbp)
-    movq    -112(%rbp), %rax
-    pushq   %rax
-    print
     movq    -112(%rbp),  %rax     
     movq    %rax,       -176(%rbp)
-    movq    -144(%rbp),  %rax     
-    movq    %rax,       -248(%rbp)
-    movq    -16(%rbp),  %rax     
-    movq    %rax,       -16(%rbp)
-    movq    -96(%rbp),  %rax     
-    movq    %rax,       -40(%rbp)
     movq    -216(%rbp),  %rax     
     movq    %rax,       -216(%rbp)
-    movq    -8(%rbp),  %rax     
-    movq    %rax,       -8(%rbp)
-    movq    -144(%rbp),  %rax     
-    movq    %rax,       -24(%rbp)
-    movq    -184(%rbp),  %rax     
-    movq    %rax,       -184(%rbp)
-    movq    -48(%rbp),  %rax     
-    movq    %rax,       -48(%rbp)
     movq    -112(%rbp),  %rax     
     movq    %rax,       -112(%rbp)
     movq    -72(%rbp),  %rax     
@@ -1025,22 +1002,8 @@ __filter_out_5ifExit:
     movq    %rax,       -32(%rbp)
     movq    -32(%rbp),  %rax     
     movq    %rax,       -176(%rbp)
-    movq    -144(%rbp),  %rax     
-    movq    %rax,       -248(%rbp)
-    movq    -16(%rbp),  %rax     
-    movq    %rax,       -16(%rbp)
-    movq    -96(%rbp),  %rax     
-    movq    %rax,       -40(%rbp)
     movq    -216(%rbp),  %rax     
     movq    %rax,       -216(%rbp)
-    movq    -8(%rbp),  %rax     
-    movq    %rax,       -8(%rbp)
-    movq    -144(%rbp),  %rax     
-    movq    %rax,       -24(%rbp)
-    movq    -184(%rbp),  %rax     
-    movq    %rax,       -184(%rbp)
-    movq    -48(%rbp),  %rax     
-    movq    %rax,       -48(%rbp)
     movq    -32(%rbp),  %rax     
     movq    %rax,       -112(%rbp)
     movq    -128(%rbp),  %rax     

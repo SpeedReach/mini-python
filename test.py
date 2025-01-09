@@ -4,8 +4,9 @@ def filter_out(p, l):
         a = x > p
         b = x % p == 0
         if a and b:
-            l[i] = 0
             print(i)
+            l[i] = 0
+
         i = i + 1
 
 def main():
