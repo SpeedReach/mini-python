@@ -9,19 +9,17 @@ const ssa = @import("ssa/ssa.zig");
 const codegen = @import("codegen/codegen.zig");
 const opt = @import("optimization/optimization.zig");
 
-pub fn compile(out: std.io.AnyWriter, code: [:0]const u8) !void {
+pub fn compile(out: std.io.AnyWriter, code: [:0]const u8, type_only: bool) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
     var parser = parse.Parser.init(allocator, code);
     const ast_file = try parser.parse();
-    //  catch |err| {
-    //     std.debug.print("Error {}: {s}\n", .{ err, parser.diagnostics });
-    //     return;
-    // };
+    if (type_only) {
+        return;
+    }
 
     const cfg = try cfgir.astToCfgIR(allocator, ast_file);
-    try cfgir.generateMermaidDiagram(cfg.functions.get("primes").?, std.io.getStdOut().writer().any());
 
     var ssa_ir = try ssa.construct.constructSSA(allocator, cfg);
 
@@ -42,7 +40,16 @@ pub fn main() !void {
     var args = std.process.args(); //why does this only compile with "var"??
     _ = args.skip(); //to skip the zig call
 
-    const path = args.next().?;
+    const first = args.next().?;
+    var path: []const u8 = undefined;
+    var type_only = false;
+    if (std.mem.eq("--type-only", first)) {
+        path = args.next().?;
+        type_only = true;
+    } else {
+        path = first;
+    }
+
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
     const file_size = (try file.stat()).size;
@@ -56,5 +63,5 @@ pub fn main() !void {
         try std.fmt.allocPrint(allocator, "{s}.s", .{path[0 .. path.len - 3]}),
         .{ .read = true },
     );
-    try compile(out_file.writer().any(), imm_buffer);
+    try compile(out_file.writer().any(), imm_buffer, type_only);
 }
