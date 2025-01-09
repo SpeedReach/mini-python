@@ -1,10 +1,12 @@
 const ast = @import("./ast.zig");
 const std = @import("std");
+const ds = @import("../ds/set.zig");
 
 pub const Error = error{
     IdentConflict,
     UndefinedFunction,
     WrongNumberOfArgs,
+    ListShouldFollowRange,
 };
 
 pub const AnalyzedFunction = struct {
@@ -57,6 +59,14 @@ pub const Analyzer = struct {
             return Error.IdentConflict;
         }
 
+        var arg_names = std.StringHashMap(void).init(self.allocator);
+        defer arg_names.deinit();
+        for (def.params.items) |param| {
+            if (arg_names.contains(param)) {
+                return Error.IdentConflict;
+            }
+            try arg_names.put(param, void{});
+        }
         try self.functions.put(def.name, AnalyzedFunction{
             .name = def.name,
             .arg_num = def.params.items.len,
@@ -118,6 +128,16 @@ pub const Analyzer = struct {
                 }
                 for (function_call.args.items) |arg| {
                     try self.analyzeExpr(arg);
+                }
+
+                if (std.mem.eql(u8, "list", function_call.name)) {
+                    const arg: *ast.Expr = function_call.args.items[0];
+                    if (arg.* != .function_call) {
+                        return Error.ListShouldFollowRange;
+                    }
+                    if (!std.mem.eql(u8, "range", arg.*.function_call.name)) {
+                        return Error.ListShouldFollowRange;
+                    }
                 }
             },
             ast.ExprTag.bin_op => |bin_op| {
