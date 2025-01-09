@@ -9,12 +9,15 @@ const ssa = @import("ssa/ssa.zig");
 const codegen = @import("codegen/codegen.zig");
 const opt = @import("optimization/optimization.zig");
 
-pub fn compile(out: std.io.AnyWriter, code: [:0]const u8, type_only: bool) !void {
+pub fn compile(out: std.io.AnyWriter, code: [:0]const u8, parse_only: bool, type_only: bool) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
     var parser = parse.Parser.init(allocator, code);
     const ast_file = try parser.parse();
+    if (parse_only) {
+        return;
+    }
 
     var analyzer = ast.Analyzer.init(allocator);
     try analyzer.analyze(ast_file);
@@ -46,9 +49,13 @@ pub fn main() !void {
     const first = args.next().?;
     var path: []const u8 = undefined;
     var type_only = false;
+    var parse_only = false;
     if (std.mem.eql(u8, "--type-only", first)) {
         path = args.next().?;
         type_only = true;
+    } else if (std.mem.eql(u8, "--parse-only", first)) {
+        path = args.next().?;
+        parse_only = true;
     } else {
         path = first;
     }
@@ -66,5 +73,5 @@ pub fn main() !void {
         try std.fmt.allocPrint(allocator, "{s}.s", .{path[0 .. path.len - 3]}),
         .{ .read = true },
     );
-    try compile(out_file.writer().any(), imm_buffer, type_only);
+    try compile(out_file.writer().any(), imm_buffer, parse_only, type_only);
 }

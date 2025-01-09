@@ -69,6 +69,13 @@ pub const Parser = struct {
             if (id_token.raw.tag == RawToken.Tag.r_paren) {
                 return argumentNames;
             }
+            if (id_token.raw.tag != RawToken.Tag.identifier) {
+                self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect identifier, got {} at position {}", .{
+                    id_token,
+                    self.lexer.pos(),
+                });
+                return Error.ParsingFailed;
+            }
             try argumentNames.append(self.code[id_token.raw.loc.start..id_token.raw.loc.end]);
             const end_token = try self.lexer.next();
             switch (end_token) {
@@ -351,6 +358,7 @@ pub const Parser = struct {
         var defs = std.ArrayList(ast.Def).init(self.allocator);
         var statements = std.ArrayList(ast.Statement).init(self.allocator);
 
+        var def_end = false;
         while (true) {
             const token = try self.lexer.peek();
             switch (token) {
@@ -361,6 +369,10 @@ pub const Parser = struct {
                 .raw => |raw| {
                     switch (raw.tag) {
                         .def => {
+                            if (def_end) {
+                                self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect statement, got def at position {}", .{self.lexer.pos()});
+                                return Error.ParsingFailed;
+                            }
                             const def = try self.parseDef();
                             try defs.append(def);
                         },
@@ -368,6 +380,7 @@ pub const Parser = struct {
                             break;
                         },
                         else => {
+                            def_end = true;
                             const statement = try self.parseStatement();
                             try statements.append(statement);
                         },
@@ -379,7 +392,10 @@ pub const Parser = struct {
                 },
             }
         }
-
+        if (statements.items.len == 0) {
+            self.diagnostics = try std.fmt.allocPrint(self.allocator, "Expect at least one statement", .{});
+            return Error.ParsingFailed;
+        }
         return ast.AstFile{
             .defs = defs,
             .statements = statements,
