@@ -212,14 +212,14 @@ pub const SSAConstructor = struct {
             .Sequential => return block.*.Sequential.inner.*.name,
         }
     }
-    fn setPhiValues(block: *AnnotatedBlock, preccedor_id: u32, new_vars: std.StringHashMap(void), counter: *const VariableCounter) !void {
+    fn setPhiValues(block: *AnnotatedBlock, preccedor_id: u32, _: std.StringHashMap(void), counter: *const VariableCounter) !void {
         switch (block.*) {
             .Decision => {
                 var it = block.*.Decision.phis.keyIterator();
                 while (it.next()) |phi| {
-                    if (!new_vars.contains(phi.*)) {
-                        continue;
-                    }
+                    //if (!new_vars.contains(phi.*)) {
+                    //    continue;
+                    //}
                     const latest = counter.getLatest(phi.*);
                     if (latest != null) {
                         try block.*.Decision.phis.getPtr(phi.*).?.*.append(ssa.PhiValue{ .block = preccedor_id, .value = ssa.Value{
@@ -234,9 +234,9 @@ pub const SSAConstructor = struct {
             .Sequential => {
                 var it = block.*.Sequential.phis.keyIterator();
                 while (it.next()) |phi| {
-                    if (!new_vars.contains(phi.*)) {
-                        continue;
-                    }
+                    //if (!new_vars.contains(phi.*)) {
+                    //    continue;
+                    //}
                     const latest = counter.getLatest(phi.*);
                     if (latest != null) {
                         try block.*.Sequential.phis.getPtr(phi.*).?.*.append(ssa.PhiValue{ .block = preccedor_id, .value = ssa.Value{
@@ -761,50 +761,57 @@ fn annotateCfg(allocator: std.mem.Allocator, global_vars: *std.StringHashMap(voi
 }
 
 fn insertPhis(_: *const std.StringHashMap(void), cfg: *const AnnotatedCfg, dom_frontiers: dom.DominaceFrontiers) !void {
-    var it = cfg.blocks.valueIterator();
-    while (it.next()) |block| {
-        switch (block.*.*) {
-            AnnotatedBlockTag.Decision => {
-                const frontiers = dom_frontiers.get(block.*.*.Decision.inner.id).?;
-                var frontier_it = frontiers.iterator();
-                while (frontier_it.next()) |frontier| {
-                    std.debug.print("D{d} has frontier {d}\n", .{ block.*.*.Decision.inner.id, frontier.* });
-                    var new_var_it = block.*.*.Decision.phis.keyIterator();
-                    while (new_var_it.next()) |new_var| {
-                        const frontier_block = cfg.blocks.getPtr(frontier.*).?.*;
-                        var phi_values = if (frontier_block.* == AnnotatedBlockTag.Decision) &frontier_block.*.Decision.phis else &frontier_block.*.Sequential.phis;
-                        if (phi_values.contains(new_var.*)) {
-                            continue;
+    var inserted = true;
+    while (inserted) {
+        inserted = false;
+        var it = cfg.blocks.valueIterator();
+        while (it.next()) |block| {
+            switch (block.*.*) {
+                AnnotatedBlockTag.Decision => {
+                    const frontiers = dom_frontiers.get(block.*.*.Decision.inner.id).?;
+                    var frontier_it = frontiers.iterator();
+                    while (frontier_it.next()) |frontier| {
+                        std.debug.print("D{d} has frontier {d}\n", .{ block.*.*.Decision.inner.id, frontier.* });
+                        var new_var_it = block.*.*.Decision.phis.keyIterator();
+                        while (new_var_it.next()) |new_var| {
+                            const frontier_block = cfg.blocks.getPtr(frontier.*).?.*;
+                            var phi_values = if (frontier_block.* == AnnotatedBlockTag.Decision) &frontier_block.*.Decision.phis else &frontier_block.*.Sequential.phis;
+                            if (phi_values.contains(new_var.*)) {
+                                continue;
+                            }
+                            inserted = true;
+                            try phi_values.*.put(new_var.*, std.ArrayList(ssa.PhiValue).init(block.*.*.Decision.phis.allocator));
                         }
-                        try phi_values.*.put(new_var.*, std.ArrayList(ssa.PhiValue).init(block.*.*.Decision.phis.allocator));
                     }
-                }
-            },
-            AnnotatedBlockTag.Sequential => {
-                const frontiers = dom_frontiers.get(block.*.*.Sequential.inner.id).?;
-                var frontier_it = frontiers.iterator();
-                while (frontier_it.next()) |frontier| {
-                    std.debug.print("S{d} has frontier {d}\n", .{ block.*.*.Sequential.inner.id, frontier.* });
-                    var new_var_it = block.*.*.Sequential.phis.keyIterator();
-                    while (new_var_it.next()) |new_var| {
-                        const frontier_block = cfg.blocks.getPtr(frontier.*).?.*;
-                        var phi_values = if (frontier_block.* == AnnotatedBlockTag.Decision) &frontier_block.*.Decision.phis else &frontier_block.*.Sequential.phis;
-                        if (phi_values.contains(new_var.*)) {
-                            continue;
+                },
+                AnnotatedBlockTag.Sequential => {
+                    const frontiers = dom_frontiers.get(block.*.*.Sequential.inner.id).?;
+                    var frontier_it = frontiers.iterator();
+                    while (frontier_it.next()) |frontier| {
+                        std.debug.print("S{d} has frontier {d}\n", .{ block.*.*.Sequential.inner.id, frontier.* });
+                        var new_var_it = block.*.*.Sequential.phis.keyIterator();
+                        while (new_var_it.next()) |new_var| {
+                            const frontier_block = cfg.blocks.getPtr(frontier.*).?.*;
+                            var phi_values = if (frontier_block.* == AnnotatedBlockTag.Decision) &frontier_block.*.Decision.phis else &frontier_block.*.Sequential.phis;
+                            if (phi_values.contains(new_var.*)) {
+                                continue;
+                            }
+                            inserted = true;
+                            try phi_values.*.put(new_var.*, std.ArrayList(ssa.PhiValue).init(block.*.*.Sequential.phis.allocator));
                         }
-                        try phi_values.*.put(new_var.*, std.ArrayList(ssa.PhiValue).init(block.*.*.Sequential.phis.allocator));
-                    }
-                    var new_var_it2 = block.*.*.Sequential.assigned_vars.keyIterator();
-                    while (new_var_it2.next()) |new_var| {
-                        const frontier_block = cfg.blocks.getPtr(frontier.*).?.*;
-                        var phi_values = if (frontier_block.* == AnnotatedBlockTag.Decision) &frontier_block.*.Decision.phis else &frontier_block.*.Sequential.phis;
-                        if (phi_values.contains(new_var.*)) {
-                            continue;
+                        var new_var_it2 = block.*.*.Sequential.assigned_vars.keyIterator();
+                        while (new_var_it2.next()) |new_var| {
+                            const frontier_block = cfg.blocks.getPtr(frontier.*).?.*;
+                            var phi_values = if (frontier_block.* == AnnotatedBlockTag.Decision) &frontier_block.*.Decision.phis else &frontier_block.*.Sequential.phis;
+                            if (phi_values.contains(new_var.*)) {
+                                continue;
+                            }
+                            inserted = true;
+                            try phi_values.*.put(new_var.*, std.ArrayList(ssa.PhiValue).init(block.*.*.Sequential.phis.allocator));
                         }
-                        try phi_values.*.put(new_var.*, std.ArrayList(ssa.PhiValue).init(block.*.*.Sequential.phis.allocator));
                     }
-                }
-            },
+                },
+            }
         }
     }
 }

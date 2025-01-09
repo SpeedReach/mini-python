@@ -26,14 +26,18 @@ fn applyContext(context: *ssa.FunctionContext) !void {
 fn applyMoveOnBlock(block: *ssa.Block, blocks: *std.AutoHashMap(u32, *ssa.Block)) !void {
     const phiInstructions = getPhiInstructions(block);
     const firstNotPhiIndex = getFirstNotPhiIndex(phiInstructions);
+    std.debug.print("{s} first not phi index {d}\n", .{ if (block.* == .Decision) block.*.Decision.name else block.*.Sequential.name, firstNotPhiIndex });
     for (0..firstNotPhiIndex) |i| {
         const inst = phiInstructions.items[i];
         for (inst.Assignment.rhs.Phi.values.items) |value| {
             const from_block = blocks.get(value.block).?;
+            std.debug.print("{s} from {s}\n", .{ inst.Assignment.rhs.Phi.base, if (from_block.* == .Decision) from_block.*.Decision.name else from_block.*.Sequential.name });
             switch (from_block.*) {
                 .Decision => {
-                    // Conditional blocks doesn't have assignments
-                    // So no need to move
+                    try from_block.*.Decision.instructions.append(ssa.Instruction{ .Assignment = ssa.Assignment{
+                        .variable = inst.Assignment.variable,
+                        .rhs = .{ .Value = value.value },
+                    } });
                 },
                 .Sequential => {
                     try from_block.*.Sequential.instructions.append(ssa.Instruction{ .Assignment = ssa.Assignment{
@@ -58,7 +62,7 @@ fn getFirstNotPhiIndex(instructions: *const std.ArrayList(ssa.Instruction)) usiz
         }
         return i;
     }
-    return 0;
+    return instructions.items.len;
 }
 
 fn applyRemovePhi(block: *ssa.Block) !void {

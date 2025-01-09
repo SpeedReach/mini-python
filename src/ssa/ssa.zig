@@ -249,7 +249,7 @@ fn printDecisionBlock(block: DecisionBlock) void {
     std.debug.print("    else {d}\n", .{block.else_block});
 }
 
-fn printInstruction(instruction: Instruction) void {
+pub fn printInstruction(instruction: Instruction) void {
     switch (instruction) {
         .NoOp => {},
         .Assignment => |assignment| {

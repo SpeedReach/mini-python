@@ -1,4 +1,3 @@
-
 def primes(n):
     l = range2(2, n)
     nb = 0
@@ -8,4 +7,3 @@ def primes(n):
             nb = nb + 1
             filter_out(x, l)
     return prefix(nb, l)
-

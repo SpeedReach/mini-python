@@ -21,11 +21,12 @@ pub fn compile(out: std.io.AnyWriter, code: [:0]const u8) !void {
     // };
 
     const cfg = try cfgir.astToCfgIR(allocator, ast_file);
-    try cfgir.generateMermaidDiagram(cfg.main, std.io.getStdOut().writer().any());
+    try cfgir.generateMermaidDiagram(cfg.functions.get("primes").?, std.io.getStdOut().writer().any());
 
     var ssa_ir = try ssa.construct.constructSSA(allocator, cfg);
-    ssa.print(ssa_ir);
+
     _ = try opt.const_fold.apply(allocator, &ssa_ir);
+    ssa.print(ssa_ir);
     std.debug.print("\n\n------------------after optimized------------------\n\n", .{});
     try opt.elimnate_phi.apply(&ssa_ir);
     ssa.print(ssa_ir);
