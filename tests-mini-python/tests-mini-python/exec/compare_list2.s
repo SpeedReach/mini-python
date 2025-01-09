@@ -348,6 +348,17 @@ my_strcpy:
     movq    %rbp, %rsp
     popq    %rbp
     ret
+my_memcpy:
+    pushq   %rbp
+    movq    %rsp, %rbp
+    movq    32(%rbp), %rdi
+    movq    24(%rbp), %rsi
+    movq    16(%rbp), %rdx
+    andq    $-16, %rsp
+    call    memcpy
+    movq    %rbp, %rsp
+    popq    %rbp
+    ret
 
 print_next_line:
     leaq    newline(%rip), %rdi     # Load address of format string into %rdi
@@ -445,6 +456,8 @@ _builtin_cmp:
     je  _cmp_int
     cmpq    $3, %r8
     je  _cmp_str
+    cmpq    $4, %r8
+    je  _cmp_list
 _cmp_none:
     cmpq  $0, %r9
     je  _cmp_equal
@@ -475,6 +488,40 @@ _cmp_str:
     jmp _cmp_end
 
 _cmp_list:
+    cmpq  $4, %r9
+    jne   runtime_panic    
+    movq    8(%rdi), %r8
+    movq    8(%rsi), %r9
+    cmpq    %r9, %r8
+    jg  _cmp_larger
+    jl  _cmp_smaller
+    pushq   %rdi
+    pushq   %rsi
+    pushq   %r8
+    pushq   $0
+_cmp_list_for:
+    movq    (%rsp), %rbx
+    movq    8(%rsp), %rcx
+    cmpq    %rbx, %rcx
+    je  _cmp_equal
+    movq    (%rsp), %rbx
+    movq    16(%rsp), %rcx
+    movq    24(%rsp), %rdx
+    imulq   $8, %rbx
+    addq    $16, %rbx
+    addq    %rbx, %rcx
+    addq    %rbx, %rdx
+    movq    (%rcx), %rsi
+    movq    (%rdx), %rdi
+    call   _builtin_cmp
+    cmpq    $0, %rax
+    jg  _cmp_larger
+    jl  _cmp_smaller
+    movq    (%rsp), %rbx
+    addq    $1, %rbx
+    movq    %rbx, (%rsp)
+    jmp _cmp_list_for
+
 _cmp_larger:
     movq    $1, %rax
     jmp _cmp_end
@@ -568,6 +615,115 @@ add_str:
     ret
     
 add_list:
+    pushq   %rdi
+    pushq   %rsi
+    movq    8(%rdi), %r8  # r8 = len(list1)
+    movq    8(%rsi), %r9  # r9 = len(list2)
+
+    addq  %r8, %r9        # We have to malloc 16 + (len(list1) + len(list2)) * 8
+    imulq $8, %r9
+    addq  $16, %r9
+    malloc  %r9
+    pushq   %rax
+    movq    $4, (%rax)    # Set type to string
+    movq    -8(%rbp), %rdi
+    movq    -16(%rbp), %rsi
+    movq    8(%rdi), %r8  # r8 = len(list1)
+    movq    8(%rsi), %r9  # r9 = len(list2)
+    addq    %r8, %r9
+    movq    %r9, 8(%rax)  # Set len(after concat)
+    movq    -8(%rbp), %rdi
+    movq    %rdi, %r8     # Set r8 = str1
+      
+    addq    $16, %rax     # Set (rax + 16) to the destination of strcpy
+    pushq   %rax
+
+    addq    $16, %r8       # Set r8 = ptr(str1 start)
+    pushq   %r8    
+
+    movq    8(%rdi), %r8
+    imulq   $8, %r8
+    pushq   %r8  
+
+    call  my_memcpy
+    
+    popq    %r8
+    popq    %rax
+    popq    %rax
+    addq    %r8, %rax
+    pushq %rax
+
+    movq    -16(%rbp), %rsi
+    addq    $16, %rsi
+    pushq   %rsi
+
+    movq    -16(%rbp), %rsi
+    movq    8(%rsi), %r9
+    imulq   $8, %r9
+    pushq   %r9
+    call  my_memcpy
+    movq  -24(%rbp),  %rax
+    
+    movq    %rbp, %rsp
+    popq    %rbp
+    ret
+
+_builtin_eq:
+    pushq   %rbp
+    movq    %rsp, %rbp
+    movq    (%rdi), %r8
+    movq    (%rsi), %r9
+    cmpq    %r8, %r9
+    jne _eq_false
+    cmpq    $4, %r8
+    je _eq_list
+    call _builtin_cmp
+w:
+    cmpq    $0, %rax
+    je    _eq_true
+    jmp   _eq_false
+_eq_list:
+    movq    8(%rdi), %r8
+    movq    8(%rsi), %r9
+    cmpq    %r9, %r8
+    jne _eq_false
+    pushq   %rdi
+    pushq   %rsi
+    pushq   %r8
+    pushq   $0
+_eq_list_for:
+    movq    (%rsp), %rbx
+    movq    8(%rsp), %rcx
+    cmpq    %rbx, %rcx
+    je  _eq_true
+    movq    (%rsp), %rbx
+    movq    16(%rsp), %rcx
+    movq    24(%rsp), %rdx
+    imulq   $8, %rbx
+    addq    $16, %rbx
+    addq    %rbx, %rcx
+    addq    %rbx, %rdx
+    movq    (%rcx), %rsi
+    movq    (%rdx), %rdi
+    call   _builtin_eq
+    cmpq    $0, %rax
+    je _eq_false
+    movq    (%rsp), %rbx
+    addq    $1, %rbx
+    movq    %rbx, (%rsp)
+    jmp _eq_list_for
+
+_eq_false:
+    movq    $0, %rax
+    jmp _eq_end
+_eq_true:
+    movq    $1, %rax
+    jmp _eq_end
+_eq_end:
+
+    movq    %rbp, %rsp
+    popq    %rbp
+    ret
 main:
     pushq  %rbp
     movq    %rsp, %rbp
@@ -640,21 +796,12 @@ main_0_entry:
     movq    -128(%rbp), %rax
     popq    %rdi
     movq    %rax, %rsi
-    call    _builtin_cmp
-    cmpq    $0, %rax
-    je      branch_0
-    jmp branch_1
-branch_0:
-    movq    $0, %rax
-    jmp     branch_2
-branch_1:
-    movq    $1, %rax
-    jmp     branch_2
-branch_2:
-    pushq  %rax
+    call    _builtin_eq
+    xorq    $1, %rax
+    pushq   %rax
     malloc  $16
-    popq    %r9
     movq    $1,     (%rax)
+    popq    %r9
     movq    %r9,    8(%rax)
     movq    %rax,       -184(%rbp)
     movq    -184(%rbp), %rax
@@ -743,21 +890,11 @@ branch_2:
     movq    -96(%rbp), %rax
     popq    %rdi
     movq    %rax, %rsi
-    call    _builtin_cmp
-    cmpq    $0, %rax
-    je      branch_3
-    jmp branch_4
-branch_3:
-    movq    $1, %rax
-    jmp     branch_5
-branch_4:
-    movq    $0, %rax
-    jmp     branch_5
-branch_5:
-    pushq  %rax
+    call    _builtin_eq
+    pushq   %rax
     malloc  $16
-    popq    %r9
     movq    $1,     (%rax)
+    popq    %r9
     movq    %r9,    8(%rax)
     movq    %rax,       -104(%rbp)
     movq    -104(%rbp), %rax
@@ -846,21 +983,11 @@ branch_5:
     movq    -80(%rbp), %rax
     popq    %rdi
     movq    %rax, %rsi
-    call    _builtin_cmp
-    cmpq    $0, %rax
-    je      branch_6
-    jmp branch_7
-branch_6:
-    movq    $1, %rax
-    jmp     branch_8
-branch_7:
-    movq    $0, %rax
-    jmp     branch_8
-branch_8:
-    pushq  %rax
+    call    _builtin_eq
+    pushq   %rax
     malloc  $16
-    popq    %r9
     movq    $1,     (%rax)
+    popq    %r9
     movq    %r9,    8(%rax)
     movq    %rax,       -56(%rbp)
     movq    -56(%rbp), %rax
@@ -932,21 +1059,11 @@ branch_8:
     movq    -16(%rbp), %rax
     popq    %rdi
     movq    %rax, %rsi
-    call    _builtin_cmp
-    cmpq    $0, %rax
-    je      branch_9
-    jmp branch_10
-branch_9:
-    movq    $1, %rax
-    jmp     branch_11
-branch_10:
-    movq    $0, %rax
-    jmp     branch_11
-branch_11:
-    pushq  %rax
+    call    _builtin_eq
+    pushq   %rax
     malloc  $16
-    popq    %r9
     movq    $1,     (%rax)
+    popq    %r9
     movq    %r9,    8(%rax)
     movq    %rax,       -48(%rbp)
     movq    -48(%rbp), %rax

@@ -35,7 +35,6 @@ fn applyContext(allocator: std.mem.Allocator, context: *ssa.FunctionContext) !bo
         var block_it = context.blocks.iterator();
         while (block_it.next()) |entry| {
             const block = entry.value_ptr.*;
-            std.debug.print("folding block {s}\n", .{if (block.* == .Decision) block.*.Decision.name else block.*.Sequential.name});
             switch (block.*) {
                 .Decision => {
                     if (try applyInstructions(allocator, &block.*.Decision.instructions, &const_vars)) {

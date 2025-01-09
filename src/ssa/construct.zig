@@ -8,7 +8,7 @@ const CfgDecisionBlock = cfgir.DecisionBlock;
 const ssa = @import("./ssa.zig");
 const math = std.math;
 const std = @import("std");
-const dom = @import("./dom_tree.zig");
+const dom = @import("./dom_frontiers.zig");
 const VariableCounter = @import("./variable_counter.zig").VariableCounter;
 
 const HashSet = @import("../ds/set.zig").HashSet;
@@ -157,12 +157,11 @@ pub const SSAConstructor = struct {
     ) !void {
         const block = blocks.get(dom_node.id).?;
 
-        const need_pop = block.* == .Sequential;
         //After leaving the block, we need to pop the variables from the counter
         //So dominator siblings can use the same variable names
         var var_on_entry = std.StringHashMap(ssa.Variable).init(self.allocator);
         defer var_on_entry.deinit();
-        if (need_pop) {
+        if (block.* == .Sequential) {
             var it = block.*.Sequential.assigned_vars.keyIterator();
             while (it.next()) |name_ptr| {
                 const name = name_ptr.*;
@@ -172,8 +171,14 @@ pub const SSAConstructor = struct {
                 }
             }
         }
-
-        std.debug.print("building {s}\n", .{getBlockName(block)});
+        var it = if (block.* == .Sequential) block.*.Sequential.phis.keyIterator() else block.*.Decision.phis.keyIterator();
+        while (it.next()) |name_ptr| {
+            const name = name_ptr.*;
+            const latest_version = var_counter.getLatest(name);
+            if (latest_version != null) {
+                try var_on_entry.put(name, latest_version.?);
+            }
+        }
 
         const entry_block = try self.buildBlock(self.allocator, args, block.*, var_counter);
         try self.setSuccessorsPhiVals(blocks, dom_node.id, var_counter);
@@ -183,16 +188,11 @@ pub const SSAConstructor = struct {
             try self.dfsBuildBlock(null, blocks, dest, child, var_counter);
         }
 
-        if (need_pop) {
-            //Pop the variables from the counter
-            // Fix this , use recursive instead
-            //Might don't need fix(?)
-            var var_it = var_on_entry.iterator();
-            while (var_it.next()) |entry| {
-                const name = entry.key_ptr.*;
-                const version = entry.value_ptr.*;
-                try var_counter.popUntil(name, version.version);
-            }
+        var var_it = var_on_entry.iterator();
+        while (var_it.next()) |entry| {
+            const name = entry.key_ptr.*;
+            const version = entry.value_ptr.*;
+            try var_counter.popUntil(name, version.version);
         }
     }
 
@@ -209,7 +209,6 @@ pub const SSAConstructor = struct {
                 while (it.next()) |phi| {
                     const latest = counter.getLatest(phi.*);
                     if (latest != null) {
-                        std.debug.print("setting phi {s} in {s} from {d} with {any}\n", .{ phi.*, getBlockName(block), preccedor_id, latest });
                         try block.*.Decision.phis.getPtr(phi.*).?.*.append(ssa.PhiValue{ .block = preccedor_id, .value = ssa.Value{
                             .Var = ssa.Variable{
                                 .version = latest.?.version,
@@ -249,16 +248,13 @@ pub const SSAConstructor = struct {
         defer walked.deinit();
         defer queue.deinit();
         try queue.enqueue(start);
-        std.debug.print("wstart\n", .{});
         while (queue.dequeue()) |block_id| {
-            std.debug.print("www {d}\n", .{block_id});
             if (walked.contains(block_id)) {
                 continue;
             }
             try walked.add(block_id);
 
             const block = blocks.get(block_id).?;
-            std.debug.print("setting phi for{s}\n", .{getBlockName(block)});
             try setPhiValues(block, start, counter);
             switch (block.*) {
                 .Decision => |des| {
@@ -475,11 +471,6 @@ pub const SSAConstructor = struct {
             }
         }
 
-        for (0..access_lists.items.len) |i| {
-            const a = access_lists.items[i];
-            std.debug.print("a: {any}\n", .{a});
-        }
-
         var array = first_array;
         var new_vars = std.ArrayList(ssa.Variable).init(allocator);
         for (0..access_lists.items.len - 1) |i| {
@@ -503,7 +494,7 @@ pub const SSAConstructor = struct {
         const last_access = access_lists.items[0];
         const idx = last_access.idx;
         const new_value = try self.handleExpr(list_write.rhs, dest, vars);
-        const new_dest_t = try vars.add("tmp");
+        const new_dest_t = if (access_lists.items.len == 1) try vars.add(base) else try vars.add("tmp");
         const inst = ssa.Instruction{ .Assignment = ssa.Assignment{
             .rhs = ssa.AssignValue{ .ArrayWrite = ssa.ArrayWriteExpr{
                 .array = array,
@@ -532,7 +523,6 @@ pub const SSAConstructor = struct {
             } };
             try dest.append(inst1);
             new_dest = new_dest_tmp;
-            std.debug.print("a: {any}, b: {any} c: {any}\n", .{ a, b, new_dest });
         }
         if (is_global_var) {
             const store_inst = ssa.Instruction{ .Store = ssa.StoreInstruction{
@@ -732,19 +722,21 @@ fn annotateCfg(allocator: std.mem.Allocator, global_vars: *std.StringHashMap(voi
             },
         }
     }
+    const dom_tree = try dom.computeDominanceTree(allocator, cfg);
+    const dom_frontiers = try dom.computeDominaceFrontiers(allocator, dom_tree, cfg.*);
     var annotated = AnnotatedCfg{
         .name = cfg.name,
         .blocks = blocks,
         .entry = 0,
         .exit = math.maxInt(u32),
-        .dom_tree = try dom.computeDominanceTree(allocator, cfg),
+        .dom_tree = dom_tree,
         .args = args,
     };
-    try insertPhis(global_vars, &annotated);
+    try insertPhis(global_vars, &annotated, dom_frontiers);
     return annotated;
 }
 
-fn insertPhis(global_var: *std.StringHashMap(void), cfg: *AnnotatedCfg) !void {
+fn insertPhis(global_var: *const std.StringHashMap(void), cfg: *const AnnotatedCfg, _: dom.DominaceFrontiers) !void {
     var it = cfg.blocks.valueIterator();
     while (it.next()) |block| {
         switch (block.*.*) {
@@ -847,7 +839,6 @@ fn identifyExprUsedVars(expr: *ast.Expr, used_vars: *std.StringHashMap(void), co
             switch (expr.*.@"const") {
                 .string => {
                     try const_strings.put(expr.*.@"const".string, void{});
-                    std.debug.print("const string: {s}\n", .{expr.*.@"const".string});
                 },
                 else => {},
             }
@@ -898,8 +889,6 @@ const parse = @import("../parser/parser.zig");
 pub fn compile(allocator: std.mem.Allocator, code: [:0]const u8) !*CfgIR {
     var parser = parse.Parser.init(allocator, code);
     const ast_file = parser.parse() catch |err| {
-        std.debug.print("{}\n", .{err});
-        std.debug.print("{s}\n", .{parser.diagnostics});
         return err;
     };
     const w = try cfgir.astToCfgIR(allocator, ast_file);

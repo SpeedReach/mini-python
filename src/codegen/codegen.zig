@@ -130,7 +130,6 @@ fn writeIsBool(allocator: std.mem.Allocator, writer: std.io.AnyWriter, value: ss
 }
 
 fn writeBlock(allocator: std.mem.Allocator, writer: std.io.AnyWriter, block: ssa.Block, blocks: *const std.AutoHashMap(u32, *ssa.Block), rbp_offset: *const std.StringHashMap(i64)) !void {
-    std.debug.print("block name: {s}\n", .{getBlockName(&block)});
     switch (block) {
         .Decision => {
             try writer.print("{s}:\n", .{block.Decision.name});
@@ -261,7 +260,6 @@ fn writeAssignment(allocator: Allocator, w: std.io.AnyWriter, assignment: ssa.As
                 .Var => {
                     const varname = try getVarName(allocator, value.Var);
                     defer allocator.free(varname);
-                    std.debug.print("var name: {s}\n", .{varname});
                     const offset = rbp_offsets.get(varname).?;
                     try w.print("{s}movq    {d}(%rbp),  %rax     \n", .{ Indent, offset });
                     try w.print("{s}movq    %rax,       {d}(%rbp)\n", .{ Indent, assign_offset });
@@ -585,8 +583,8 @@ fn writeBinOp(allocator: Allocator, w: std.io.AnyWriter, bin_op: ssa.BinOpExpr, 
             try w.print("{s}jmp     {s}\n", .{ Indent, end_label });
             try w.print("{s}:\n", .{gt_label});
             try w.print("{s}movq    $1, %rax\n", .{Indent});
-            try w.print("{s}pushq  %rax\n", .{Indent});
             try w.print("{s}:\n", .{end_label});
+            try w.print("{s}pushq  %rax\n", .{Indent});
             try w.print("{s}malloc  $16\n", .{Indent});
             try w.print("{s}popq    %r9\n", .{Indent});
             try w.print("{s}movq    $1,     (%rax)\n", .{Indent});
@@ -624,24 +622,11 @@ fn writeBinOp(allocator: Allocator, w: std.io.AnyWriter, bin_op: ssa.BinOpExpr, 
             try writeVal(allocator, w, bin_op.rhs, rbp_offsets);
             try w.print("{s}popq    %rdi\n", .{Indent});
             try w.print("{s}movq    %rax, %rsi\n", .{Indent});
-            try w.print("{s}call    _builtin_cmp\n", .{Indent});
-            try w.print("{s}cmpq    $0, %rax\n", .{Indent});
-            const eq_label = try getRandBranchName(allocator);
-            const else_label = try getRandBranchName(allocator);
-            const end_label = try getRandBranchName(allocator);
-            try w.print("{s}je      {s}\n", .{ Indent, eq_label });
-            try w.print("{s}jmp {s}\n", .{ Indent, else_label });
-            try w.print("{s}:\n", .{eq_label});
-            try w.print("{s}movq    $1, %rax\n", .{Indent});
-            try w.print("{s}jmp     {s}\n", .{ Indent, end_label });
-            try w.print("{s}:\n", .{else_label});
-            try w.print("{s}movq    $0, %rax\n", .{Indent});
-            try w.print("{s}jmp     {s}\n", .{ Indent, end_label });
-            try w.print("{s}:\n", .{end_label});
-            try w.print("{s}pushq  %rax\n", .{Indent});
+            try w.print("{s}call    _builtin_eq\n", .{Indent});
+            try w.print("{s}pushq   %rax\n", .{Indent});
             try w.print("{s}malloc  $16\n", .{Indent});
-            try w.print("{s}popq    %r9\n", .{Indent});
             try w.print("{s}movq    $1,     (%rax)\n", .{Indent});
+            try w.print("{s}popq    %r9\n", .{Indent});
             try w.print("{s}movq    %r9,    8(%rax)\n", .{Indent});
         },
         .ne => {
@@ -650,24 +635,12 @@ fn writeBinOp(allocator: Allocator, w: std.io.AnyWriter, bin_op: ssa.BinOpExpr, 
             try writeVal(allocator, w, bin_op.rhs, rbp_offsets);
             try w.print("{s}popq    %rdi\n", .{Indent});
             try w.print("{s}movq    %rax, %rsi\n", .{Indent});
-            try w.print("{s}call    _builtin_cmp\n", .{Indent});
-            try w.print("{s}cmpq    $0, %rax\n", .{Indent});
-            const ne_label = try getRandBranchName(allocator);
-            const else_label = try getRandBranchName(allocator);
-            const end_label = try getRandBranchName(allocator);
-            try w.print("{s}je      {s}\n", .{ Indent, ne_label });
-            try w.print("{s}jmp {s}\n", .{ Indent, else_label });
-            try w.print("{s}:\n", .{ne_label});
-            try w.print("{s}movq    $0, %rax\n", .{Indent});
-            try w.print("{s}jmp     {s}\n", .{ Indent, end_label });
-            try w.print("{s}:\n", .{else_label});
-            try w.print("{s}movq    $1, %rax\n", .{Indent});
-            try w.print("{s}jmp     {s}\n", .{ Indent, end_label });
-            try w.print("{s}:\n", .{end_label});
-            try w.print("{s}pushq  %rax\n", .{Indent});
+            try w.print("{s}call    _builtin_eq\n", .{Indent});
+            try w.print("{s}xorq    $1, %rax\n", .{Indent});
+            try w.print("{s}pushq   %rax\n", .{Indent});
             try w.print("{s}malloc  $16\n", .{Indent});
-            try w.print("{s}popq    %r9\n", .{Indent});
             try w.print("{s}movq    $1,     (%rax)\n", .{Indent});
+            try w.print("{s}popq    %r9\n", .{Indent});
             try w.print("{s}movq    %r9,    8(%rax)\n", .{Indent});
         },
         .le => {

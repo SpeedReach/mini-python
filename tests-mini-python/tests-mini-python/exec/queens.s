@@ -350,6 +350,17 @@ my_strcpy:
     movq    %rbp, %rsp
     popq    %rbp
     ret
+my_memcpy:
+    pushq   %rbp
+    movq    %rsp, %rbp
+    movq    32(%rbp), %rdi
+    movq    24(%rbp), %rsi
+    movq    16(%rbp), %rdx
+    andq    $-16, %rsp
+    call    memcpy
+    movq    %rbp, %rsp
+    popq    %rbp
+    ret
 
 print_next_line:
     leaq    newline(%rip), %rdi     # Load address of format string into %rdi
@@ -447,6 +458,8 @@ _builtin_cmp:
     je  _cmp_int
     cmpq    $3, %r8
     je  _cmp_str
+    cmpq    $4, %r8
+    je  _cmp_list
 _cmp_none:
     cmpq  $0, %r9
     je  _cmp_equal
@@ -477,6 +490,40 @@ _cmp_str:
     jmp _cmp_end
 
 _cmp_list:
+    cmpq  $4, %r9
+    jne   runtime_panic    
+    movq    8(%rdi), %r8
+    movq    8(%rsi), %r9
+    cmpq    %r9, %r8
+    jg  _cmp_larger
+    jl  _cmp_smaller
+    pushq   %rdi
+    pushq   %rsi
+    pushq   %r8
+    pushq   $0
+_cmp_list_for:
+    movq    (%rsp), %rbx
+    movq    8(%rsp), %rcx
+    cmpq    %rbx, %rcx
+    je  _cmp_equal
+    movq    (%rsp), %rbx
+    movq    16(%rsp), %rcx
+    movq    24(%rsp), %rdx
+    imulq   $8, %rbx
+    addq    $16, %rbx
+    addq    %rbx, %rcx
+    addq    %rbx, %rdx
+    movq    (%rcx), %rsi
+    movq    (%rdx), %rdi
+    call   _builtin_cmp
+    cmpq    $0, %rax
+    jg  _cmp_larger
+    jl  _cmp_smaller
+    movq    (%rsp), %rbx
+    addq    $1, %rbx
+    movq    %rbx, (%rsp)
+    jmp _cmp_list_for
+
 _cmp_larger:
     movq    $1, %rax
     jmp _cmp_end
@@ -570,6 +617,115 @@ add_str:
     ret
     
 add_list:
+    pushq   %rdi
+    pushq   %rsi
+    movq    8(%rdi), %r8  # r8 = len(list1)
+    movq    8(%rsi), %r9  # r9 = len(list2)
+
+    addq  %r8, %r9        # We have to malloc 16 + (len(list1) + len(list2)) * 8
+    imulq $8, %r9
+    addq  $16, %r9
+    malloc  %r9
+    pushq   %rax
+    movq    $4, (%rax)    # Set type to string
+    movq    -8(%rbp), %rdi
+    movq    -16(%rbp), %rsi
+    movq    8(%rdi), %r8  # r8 = len(list1)
+    movq    8(%rsi), %r9  # r9 = len(list2)
+    addq    %r8, %r9
+    movq    %r9, 8(%rax)  # Set len(after concat)
+    movq    -8(%rbp), %rdi
+    movq    %rdi, %r8     # Set r8 = str1
+      
+    addq    $16, %rax     # Set (rax + 16) to the destination of strcpy
+    pushq   %rax
+
+    addq    $16, %r8       # Set r8 = ptr(str1 start)
+    pushq   %r8    
+
+    movq    8(%rdi), %r8
+    imulq   $8, %r8
+    pushq   %r8  
+
+    call  my_memcpy
+    
+    popq    %r8
+    popq    %rax
+    popq    %rax
+    addq    %r8, %rax
+    pushq %rax
+
+    movq    -16(%rbp), %rsi
+    addq    $16, %rsi
+    pushq   %rsi
+
+    movq    -16(%rbp), %rsi
+    movq    8(%rsi), %r9
+    imulq   $8, %r9
+    pushq   %r9
+    call  my_memcpy
+    movq  -24(%rbp),  %rax
+    
+    movq    %rbp, %rsp
+    popq    %rbp
+    ret
+
+_builtin_eq:
+    pushq   %rbp
+    movq    %rsp, %rbp
+    movq    (%rdi), %r8
+    movq    (%rsi), %r9
+    cmpq    %r8, %r9
+    jne _eq_false
+    cmpq    $4, %r8
+    je _eq_list
+    call _builtin_cmp
+w:
+    cmpq    $0, %rax
+    je    _eq_true
+    jmp   _eq_false
+_eq_list:
+    movq    8(%rdi), %r8
+    movq    8(%rsi), %r9
+    cmpq    %r9, %r8
+    jne _eq_false
+    pushq   %rdi
+    pushq   %rsi
+    pushq   %r8
+    pushq   $0
+_eq_list_for:
+    movq    (%rsp), %rbx
+    movq    8(%rsp), %rcx
+    cmpq    %rbx, %rcx
+    je  _eq_true
+    movq    (%rsp), %rbx
+    movq    16(%rsp), %rcx
+    movq    24(%rsp), %rdx
+    imulq   $8, %rbx
+    addq    $16, %rbx
+    addq    %rbx, %rcx
+    addq    %rbx, %rdx
+    movq    (%rcx), %rsi
+    movq    (%rdx), %rdi
+    call   _builtin_eq
+    cmpq    $0, %rax
+    je _eq_false
+    movq    (%rsp), %rbx
+    addq    $1, %rbx
+    movq    %rbx, (%rsp)
+    jmp _eq_list_for
+
+_eq_false:
+    movq    $0, %rax
+    jmp _eq_end
+_eq_true:
+    movq    $1, %rax
+    jmp _eq_end
+_eq_end:
+
+    movq    %rbp, %rsp
+    popq    %rbp
+    ret
 main:
     pushq  %rbp
     movq    %rsp, %rbp
@@ -865,21 +1021,11 @@ __check_3_ifCondBlock:
     movq    -176(%rbp), %rax
     popq    %rdi
     movq    %rax, %rsi
-    call    _builtin_cmp
-    cmpq    $0, %rax
-    je      branch_6
-    jmp branch_7
-branch_6:
-    movq    $1, %rax
-    jmp     branch_8
-branch_7:
-    movq    $0, %rax
-    jmp     branch_8
-branch_8:
-    pushq  %rax
+    call    _builtin_eq
+    pushq   %rax
     malloc  $16
-    popq    %r9
     movq    $1,     (%rax)
+    popq    %r9
     movq    %r9,    8(%rax)
     movq    %rax,       -184(%rbp)
     movq    -168(%rbp),  %rax
@@ -971,21 +1117,11 @@ branch_8:
     movq    -80(%rbp), %rax
     popq    %rdi
     movq    %rax, %rsi
-    call    _builtin_cmp
-    cmpq    $0, %rax
-    je      branch_9
-    jmp branch_10
-branch_9:
-    movq    $1, %rax
-    jmp     branch_11
-branch_10:
-    movq    $0, %rax
-    jmp     branch_11
-branch_11:
-    pushq  %rax
+    call    _builtin_eq
+    pushq   %rax
     malloc  $16
-    popq    %r9
     movq    $1,     (%rax)
+    popq    %r9
     movq    %r9,    8(%rax)
     movq    %rax,       -256(%rbp)
     movq   -184(%rbp), %rax
@@ -1086,15 +1222,15 @@ __abs_1_ifCondBlock:
     movq    %rax, %rsi
     call    _builtin_cmp
     cmpq    $-1, %rax
-    je      branch_12
-    jmp branch_13
-branch_12:
+    je      branch_6
+    jmp branch_7
+branch_6:
     movq    $1, %rax
-    jmp     branch_14
-branch_13:
+    jmp     branch_8
+branch_7:
     movq    $0, %rax
-    jmp     branch_14
-branch_14:
+    jmp     branch_8
+branch_8:
     pushq  %rax
     malloc  $16
     popq    %r9
@@ -1203,7 +1339,7 @@ __count_0_entry:
     movq    -248(%rbp),  %rax     
     movq    %rax,       -48(%rbp)
     movq    -176(%rbp),  %rax     
-    movq    %rax,       -88(%rbp)
+    movq    %rax,       -104(%rbp)
     movq    -128(%rbp),  %rax     
     movq    %rax,       -144(%rbp)
     movq    -248(%rbp),  %rax     
@@ -1215,7 +1351,7 @@ __count_0_entry:
     movq    -128(%rbp),  %rax     
     movq    %rax,       -240(%rbp)
     movq    -176(%rbp),  %rax     
-    movq    %rax,       -296(%rbp)
+    movq    %rax,       -80(%rbp)
     movq    -128(%rbp),  %rax     
     movq    %rax,       -200(%rbp)
     movq    -248(%rbp),  %rax     
@@ -1227,21 +1363,11 @@ __count_1_ifCondBlock:
     movq    -136(%rbp), %rax
     popq    %rdi
     movq    %rax, %rsi
-    call    _builtin_cmp
-    cmpq    $0, %rax
-    je      branch_15
-    jmp branch_16
-branch_15:
-    movq    $1, %rax
-    jmp     branch_17
-branch_16:
-    movq    $0, %rax
-    jmp     branch_17
-branch_17:
-    pushq  %rax
+    call    _builtin_eq
+    pushq   %rax
     malloc  $16
-    popq    %r9
     movq    $1,     (%rax)
+    popq    %r9
     movq    %r9,    8(%rax)
     movq    %rax,       -120(%rbp)
     movq   -120(%rbp), %rax
@@ -1263,7 +1389,7 @@ __count_2_ifBody:
     movq    -224(%rbp),  %rax     
     movq    %rax,       -48(%rbp)
     movq    -176(%rbp),  %rax     
-    movq    %rax,       -88(%rbp)
+    movq    %rax,       -104(%rbp)
     movq    -136(%rbp),  %rax     
     movq    %rax,       -144(%rbp)
     movq    -224(%rbp),  %rax     
@@ -1271,7 +1397,7 @@ __count_2_ifBody:
     movq    -136(%rbp),  %rax     
     movq    %rax,       -240(%rbp)
     movq    -176(%rbp),  %rax     
-    movq    %rax,       -296(%rbp)
+    movq    %rax,       -80(%rbp)
     movq    -136(%rbp),  %rax     
     movq    %rax,       -200(%rbp)
     movq    -224(%rbp),  %rax     
@@ -1282,13 +1408,13 @@ __count_3ifExit:
     pushq   %rax
     call    __range
     addq    $8, %rsp
-    movq    %rax, -80(%rbp)
-    movq    -80(%rbp),  %rax
+    movq    %rax, -72(%rbp)
+    movq    -72(%rbp),  %rax
     pushq   %rax
     call    __list
     addq    $8, %rsp
-    movq    %rax, -104(%rbp)
-    movq    -104(%rbp),  %rax     
+    movq    %rax, -96(%rbp)
+    movq    -96(%rbp),  %rax     
     movq    %rax,       -272(%rbp)
     movq    -272(%rbp),  %rax
     pushq   %rax
@@ -1312,7 +1438,7 @@ __count_3ifExit:
     movq    $0, 8(%rax)
     movq    %rax,       -16(%rbp)
     movq    -176(%rbp),  %rax     
-    movq    %rax,       -88(%rbp)
+    movq    %rax,       -104(%rbp)
     movq    -240(%rbp),  %rax     
     movq    %rax,       -144(%rbp)
     malloc  $16
@@ -1326,13 +1452,13 @@ __count_3ifExit:
     movq    -272(%rbp),  %rax     
     movq    %rax,       -40(%rbp)
     movq    -8(%rbp),  %rax     
-    movq    %rax,       -288(%rbp)
+    movq    %rax,       -296(%rbp)
     malloc  $16
     movq    $2, (%rax)
     movq    $0, 8(%rax)
     movq    %rax,       -184(%rbp)
     movq    -176(%rbp),  %rax     
-    movq    %rax,       -296(%rbp)
+    movq    %rax,       -80(%rbp)
     movq    -240(%rbp),  %rax     
     movq    %rax,       -200(%rbp)
     movq    -224(%rbp),  %rax     
@@ -1341,20 +1467,20 @@ __count_3ifExit:
 __count_4_forCondBlock:
     movq    -184(%rbp), %rax
     pushq   %rax
-    movq    -288(%rbp), %rax
+    movq    -296(%rbp), %rax
     popq    %rdi
     movq    %rax, %rsi
     call    _builtin_cmp
     cmpq    $-1, %rax
-    je      branch_18
-    jmp branch_19
-branch_18:
+    je      branch_9
+    jmp branch_10
+branch_9:
     movq    $1, %rax
-    jmp     branch_20
-branch_19:
+    jmp     branch_11
+branch_10:
     movq    $0, %rax
-    jmp     branch_20
-branch_20:
+    jmp     branch_11
+branch_11:
     pushq  %rax
     malloc  $16
     popq    %r9
@@ -1411,7 +1537,7 @@ __count_5forBody:
     popq   %rbx
     movq    %rax, (%rbx)
     movq    -192(%rbp),  %rax
-    movq    %rax, -264(%rbp)
+    movq    %rax, -288(%rbp)
     movq    -256(%rbp), %rax
     pushq   %rax
     malloc  $16
@@ -1420,25 +1546,25 @@ __count_5forBody:
     popq    %rdi
     movq    %rax, %rsi
     call    _builtin_add
-    movq    %rax,       -208(%rbp)
-    movq    -208(%rbp),  %rax     
-    movq    %rax,       -64(%rbp)
-    movq    -192(%rbp),  %rax     
+    movq    %rax,       -264(%rbp)
+    movq    -264(%rbp),  %rax     
+    movq    %rax,       -56(%rbp)
+    movq    -288(%rbp),  %rax     
     movq    %rax,       -192(%rbp)
     movq    -32(%rbp),  %rax     
     movq    %rax,       -32(%rbp)
     movq    -48(%rbp),  %rax     
     movq    %rax,       -48(%rbp)
     movq    -112(%rbp),  %rax     
-    movq    %rax,       -72(%rbp)
-    movq    -64(%rbp),  %rax     
+    movq    %rax,       -64(%rbp)
+    movq    -56(%rbp),  %rax     
     movq    %rax,       -256(%rbp)
     malloc  $16
     movq    $2, (%rax)
     movq    $0, 8(%rax)
     movq    %rax,       -16(%rbp)
-    movq    -192(%rbp),  %rax     
-    movq    %rax,       -88(%rbp)
+    movq    -288(%rbp),  %rax     
+    movq    %rax,       -104(%rbp)
     movq    -240(%rbp),  %rax     
     movq    %rax,       -144(%rbp)
     malloc  $16
@@ -1447,12 +1573,12 @@ __count_5forBody:
     movq    %rax,       -312(%rbp)
     movq    -48(%rbp),  %rax     
     movq    %rax,       -24(%rbp)
-    movq    -288(%rbp),  %rax     
-    movq    %rax,       -288(%rbp)
-    movq    -64(%rbp),  %rax     
-    movq    %rax,       -184(%rbp)
-    movq    -192(%rbp),  %rax     
+    movq    -296(%rbp),  %rax     
     movq    %rax,       -296(%rbp)
+    movq    -56(%rbp),  %rax     
+    movq    %rax,       -184(%rbp)
+    movq    -288(%rbp),  %rax     
+    movq    %rax,       -80(%rbp)
     movq    -240(%rbp),  %rax     
     movq    %rax,       -200(%rbp)
     movq    -48(%rbp),  %rax     
@@ -1463,7 +1589,7 @@ __count_6_ifCondBlock:
     pushq   %rax
     movq    -152(%rbp),  %rax
     pushq   %rax
-    movq    -296(%rbp),  %rax
+    movq    -80(%rbp),  %rax
     pushq   %rax
     call    __check
     addq    $24, %rsp
@@ -1484,90 +1610,90 @@ __count_7_ifBody:
     popq    %rdi
     movq    %rax, %rsi
     call    _builtin_add
-    movq    %rax,       -232(%rbp)
+    movq    %rax,       -216(%rbp)
     movq    -144(%rbp),  %rax
     pushq   %rax
-    movq    -232(%rbp),  %rax
+    movq    -216(%rbp),  %rax
     pushq   %rax
-    movq    -88(%rbp),  %rax
+    movq    -104(%rbp),  %rax
     pushq   %rax
     call    __count
     addq    $24, %rsp
-    movq    %rax, -216(%rbp)
+    movq    %rax, -232(%rbp)
     movq    -312(%rbp), %rax
     pushq   %rax
-    movq    -216(%rbp), %rax
+    movq    -232(%rbp), %rax
     popq    %rdi
     movq    %rax, %rsi
     call    _builtin_add
-    movq    %rax,       -56(%rbp)
-    movq    -56(%rbp),  %rax     
-    movq    %rax,       -96(%rbp)
-    movq    -88(%rbp),  %rax     
+    movq    %rax,       -208(%rbp)
+    movq    -208(%rbp),  %rax     
+    movq    %rax,       -88(%rbp)
+    movq    -104(%rbp),  %rax     
     movq    %rax,       -192(%rbp)
     movq    -32(%rbp),  %rax     
     movq    %rax,       -32(%rbp)
     movq    -24(%rbp),  %rax     
     movq    %rax,       -48(%rbp)
     movq    -112(%rbp),  %rax     
-    movq    %rax,       -72(%rbp)
-    movq    -64(%rbp),  %rax     
+    movq    %rax,       -64(%rbp)
+    movq    -56(%rbp),  %rax     
     movq    %rax,       -256(%rbp)
-    movq    -96(%rbp),  %rax     
-    movq    %rax,       -16(%rbp)
     movq    -88(%rbp),  %rax     
-    movq    %rax,       -88(%rbp)
+    movq    %rax,       -16(%rbp)
+    movq    -104(%rbp),  %rax     
+    movq    %rax,       -104(%rbp)
     movq    -144(%rbp),  %rax     
     movq    %rax,       -144(%rbp)
-    movq    -96(%rbp),  %rax     
+    movq    -88(%rbp),  %rax     
     movq    %rax,       -312(%rbp)
     movq    -24(%rbp),  %rax     
     movq    %rax,       -24(%rbp)
-    movq    -288(%rbp),  %rax     
-    movq    %rax,       -288(%rbp)
-    movq    -64(%rbp),  %rax     
-    movq    %rax,       -184(%rbp)
-    movq    -88(%rbp),  %rax     
+    movq    -296(%rbp),  %rax     
     movq    %rax,       -296(%rbp)
+    movq    -56(%rbp),  %rax     
+    movq    %rax,       -184(%rbp)
+    movq    -104(%rbp),  %rax     
+    movq    %rax,       -80(%rbp)
     movq    -144(%rbp),  %rax     
     movq    %rax,       -200(%rbp)
     movq    -24(%rbp),  %rax     
     movq    %rax,       -152(%rbp)
     jmp __count_8ifExit
 __count_8ifExit:
-    movq    -88(%rbp),  %rax     
+    movq    -80(%rbp),  %rax     
     movq    %rax,       -192(%rbp)
     movq    -32(%rbp),  %rax     
     movq    %rax,       -32(%rbp)
-    movq    -24(%rbp),  %rax     
+    movq    -152(%rbp),  %rax     
     movq    %rax,       -48(%rbp)
     movq    -112(%rbp),  %rax     
-    movq    %rax,       -72(%rbp)
-    movq    -64(%rbp),  %rax     
+    movq    %rax,       -64(%rbp)
+    movq    -56(%rbp),  %rax     
     movq    %rax,       -256(%rbp)
     malloc  $16
     movq    $2, (%rax)
     movq    $0, 8(%rax)
     movq    %rax,       -16(%rbp)
-    movq    -88(%rbp),  %rax     
-    movq    %rax,       -88(%rbp)
-    movq    -144(%rbp),  %rax     
+    movq    -80(%rbp),  %rax     
+    movq    %rax,       -104(%rbp)
+    movq    -200(%rbp),  %rax     
     movq    %rax,       -144(%rbp)
     malloc  $16
     movq    $2, (%rax)
     movq    $0, 8(%rax)
     movq    %rax,       -312(%rbp)
-    movq    -24(%rbp),  %rax     
+    movq    -152(%rbp),  %rax     
     movq    %rax,       -24(%rbp)
-    movq    -288(%rbp),  %rax     
-    movq    %rax,       -288(%rbp)
-    movq    -64(%rbp),  %rax     
-    movq    %rax,       -184(%rbp)
-    movq    -88(%rbp),  %rax     
+    movq    -296(%rbp),  %rax     
     movq    %rax,       -296(%rbp)
-    movq    -144(%rbp),  %rax     
+    movq    -56(%rbp),  %rax     
+    movq    %rax,       -184(%rbp)
+    movq    -80(%rbp),  %rax     
+    movq    %rax,       -80(%rbp)
+    movq    -200(%rbp),  %rax     
     movq    %rax,       -200(%rbp)
-    movq    -24(%rbp),  %rax     
+    movq    -152(%rbp),  %rax     
     movq    %rax,       -152(%rbp)
     jmp __count_4_forCondBlock
 __count_forexit_9:

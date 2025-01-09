@@ -32,6 +32,7 @@ pub const DominanceTree = struct {
 
 pub const DominanceNode = struct {
     id: u32,
+    idom: ?*DominanceNode,
     children: std.ArrayList(*DominanceNode),
 
     const Self = @This();
@@ -43,6 +44,7 @@ pub const DominanceNode = struct {
     pub fn init(allocator: std.mem.Allocator, id: u32) Self {
         return Self{
             .id = id,
+            .idom = null,
             .children = std.ArrayList(*DominanceNode).init(allocator),
         };
     }
@@ -93,6 +95,7 @@ pub fn computeDominanceTree(allocator: std.mem.Allocator, graph: *const cfgir.Co
                 // Add edge from dom_id to key
                 var dom_node = tree_nodes.get(dom_id).?;
                 const child = tree_nodes.get(key).?;
+                child.idom = dom_node;
                 try dom_node.children.append(child);
                 try tree_nodes.put(dom_id, dom_node);
             }

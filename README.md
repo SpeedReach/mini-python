@@ -40,5 +40,4 @@ output.
 
 
 TODO
-control flow graph handle return
-code gen
+Phi may not have to insert if it is not assigned
