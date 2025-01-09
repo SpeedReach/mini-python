@@ -15,6 +15,9 @@ pub fn compile(out: std.io.AnyWriter, code: [:0]const u8, type_only: bool) !void
     const allocator = arena.allocator();
     var parser = parse.Parser.init(allocator, code);
     const ast_file = try parser.parse();
+
+    var analyzer = ast.Analyzer.init(allocator);
+    try analyzer.analyze(ast_file);
     if (type_only) {
         return;
     }
@@ -43,7 +46,7 @@ pub fn main() !void {
     const first = args.next().?;
     var path: []const u8 = undefined;
     var type_only = false;
-    if (std.mem.eq("--type-only", first)) {
+    if (std.mem.eql(u8, "--type-only", first)) {
         path = args.next().?;
         type_only = true;
     } else {

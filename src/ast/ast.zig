@@ -1,3 +1,5 @@
+pub const Analyzer = @import("./analyze.zig").Analyzer;
+
 pub const Ident = []const u8;
 
 pub const AstFile = struct {
