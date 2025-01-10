@@ -26,11 +26,10 @@ pub fn compile(out: std.io.AnyWriter, code: [:0]const u8, parse_only: bool, type
     }
 
     const cfg = try cfgir.astToCfgIR(allocator, ast_file);
-
     var ssa_ir = try ssa.construct.constructSSA(allocator, cfg);
-
-    _ = try opt.const_fold.apply(allocator, &ssa_ir);
     ssa.print(ssa_ir);
+    _ = try opt.const_fold.apply(allocator, &ssa_ir);
+
     std.debug.print("\n\n------------------after optimized------------------\n\n", .{});
     try opt.elimnate_phi.apply(&ssa_ir);
     ssa.print(ssa_ir);
